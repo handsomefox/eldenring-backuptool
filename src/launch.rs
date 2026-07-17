@@ -13,6 +13,7 @@ pub const MONITOR_FLAG: &str = "--monitor";
 /// The exact string a user pastes into Steam → Elden Ring → Properties →
 /// General → Launch Options. The exe path is quoted so spaces are preserved;
 /// `%command%` is passed through for Steam to expand.
+#[must_use]
 pub fn launch_option(exe: &Path) -> String {
     format!("\"{}\" {MONITOR_FLAG} %command%", exe.to_string_lossy())
 }

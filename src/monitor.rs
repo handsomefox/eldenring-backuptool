@@ -21,7 +21,7 @@ use crate::snapshot::{self, Reason};
 use crate::{GAME_PROCESS, retention};
 
 const MUTEX_NAME: &str = "EldenRingSaveGuardMonitor";
-const APPEAR_TIMEOUT: Duration = Duration::from_secs(180);
+const APPEAR_TIMEOUT: Duration = Duration::from_mins(3);
 const PROCESS_POLL: Duration = Duration::from_secs(2);
 const POST_EXIT_GRACE: Duration = Duration::from_secs(8);
 
@@ -74,7 +74,9 @@ where
         let _ = child.wait();
         return 0;
     }
-    let target = target.expect("checked by `monitoring`");
+    let Ok(target) = target else {
+        return 0;
+    };
 
     watch_session(&target, &mut child);
     tracing::info!("session ended");
@@ -188,6 +190,7 @@ fn backup(target: &Target, reason: Reason) {
 }
 
 /// The vanilla save file plus its `.sl2.bak` sibling when present.
+#[must_use]
 pub fn source_files(candidate: &SaveCandidate) -> Vec<PathBuf> {
     let mut v = vec![candidate.save_file.clone()];
     if let Some(bak) = &candidate.bak_file {
@@ -209,6 +212,7 @@ fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) -> bool {
 }
 
 /// Convenience for the GUI: is a monitor currently running?
+#[must_use]
 pub fn monitor_active() -> bool {
     // If we can acquire the lock, none was held; release immediately.
     match SingleInstance::acquire(MUTEX_NAME) {

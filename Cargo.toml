@@ -5,6 +5,9 @@ edition = "2024"
 description = "Automatic versioned backups of vanilla Elden Ring saves (Elden Ring Save Guard)"
 license = "MIT"
 
+[workspace]
+resolver = "3"
+
 [lib]
 name = "save_guard"
 path = "src/lib.rs"
@@ -21,28 +24,49 @@ default = ["gui"]
 gui = ["dep:eframe", "dep:egui", "dep:rfd"]
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.11"
-zip = { version = "8", default-features = false, features = ["deflate"] }
-chrono = { version = "0.4", features = ["serde"] }
-anyhow = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-directories = "6"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+sha2 = "=0.11.0"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
+chrono = { version = "=0.4.45", features = ["serde"] }
+anyhow = "=1.0.103"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+directories = "=6.0.0"
 # GUI + dialogs: optional, enabled by the `gui` feature (see [features]).
-eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow"], optional = true }
-egui = { version = "0.35", optional = true }
-rfd = { version = "0.17", default-features = false, features = ["common-controls-v6"], optional = true }
+eframe = { version = "=0.35.0", default-features = false, features = ["default_fonts", "glow"], optional = true }
+egui = { version = "=0.35.0", optional = true }
+rfd = { version = "=0.17.2", default-features = false, features = ["common-controls-v6"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = [
+windows-sys = { version = "=0.61.2", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_Storage_FileSystem",
     "Win32_Security",
 ] }
+
+[lints]
+workspace = true
+
+[workspace.lints.rust]
+unreachable_pub = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+exit = "warn"
+multiple_unsafe_ops_per_block = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
 
 [profile.release]
 strip = true

@@ -31,13 +31,14 @@ impl Write for Sink {
 
 /// Initialize the global tracing subscriber to write to `<log_dir>/app.log`.
 /// Safe to call once; subsequent calls are no-ops.
+///
+/// # Errors
+///
+/// Returns an error if the log directory cannot be created.
 pub fn init(log_dir: &Path, level: &str) -> Result<()> {
     std::fs::create_dir_all(log_dir)?;
     let path = log_dir.join("app.log");
-    if std::fs::metadata(&path)
-        .map(|m| m.len() > MAX_LOG_BYTES)
-        .unwrap_or(false)
-    {
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX_LOG_BYTES) {
         let _ = File::create(&path); // truncate
     }
 

@@ -15,7 +15,7 @@ pub const DEFAULT_RETENTION: usize = 60;
 #[serde(default)]
 pub struct Config {
     pub version: u32,
-    /// Numeric SteamID64 folder the user chose to protect.
+    /// Numeric `SteamID64` folder the user chose to protect.
     pub selected_steamid: Option<String>,
     pub backup_dest: Option<PathBuf>,
     pub interval_secs: u64,
@@ -45,6 +45,7 @@ impl Default for Config {
 impl Config {
     /// Clamp values to safe ranges. Applied on load and before every save so a
     /// hand-edited file can never create a tight backup loop or absurd retention.
+    #[must_use]
     pub fn sanitized(mut self) -> Self {
         self.version = CONFIG_VERSION;
         self.interval_secs = self.interval_secs.max(MIN_INTERVAL_SECS);
@@ -67,27 +68,24 @@ pub struct LoadResult {
 /// broken file is preserved next to it and defaults are returned (the account
 /// selection is never silently discarded on a *readable* file, only on an
 /// unparsable one, and even then the original bytes are kept for inspection).
+#[must_use]
 pub fn load(path: &Path) -> LoadResult {
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(_) => {
-            return LoadResult {
-                config: Config::default(),
-                recovered_from: None,
-            };
-        }
+    let Ok(bytes) = std::fs::read(path) else {
+        return LoadResult {
+            config: Config::default(),
+            recovered_from: None,
+        };
     };
-    match serde_json::from_slice::<Config>(&bytes) {
-        Ok(cfg) => LoadResult {
+    if let Ok(cfg) = serde_json::from_slice::<Config>(&bytes) {
+        LoadResult {
             config: cfg.sanitized(),
             recovered_from: None,
-        },
-        Err(_) => {
-            let preserved = preserve_broken(path);
-            LoadResult {
-                config: Config::default(),
-                recovered_from: preserved,
-            }
+        }
+    } else {
+        let preserved = preserve_broken(path);
+        LoadResult {
+            config: Config::default(),
+            recovered_from: preserved,
         }
     }
 }
@@ -97,11 +95,15 @@ fn preserve_broken(path: &Path) -> Option<PathBuf> {
     let mut bad = path.as_os_str().to_owned();
     bad.push(format!(".bad-{ts}"));
     let bad = PathBuf::from(bad);
-    std::fs::rename(path, &bad).ok().map(|_| bad)
+    std::fs::rename(path, &bad).ok().map(|()| bad)
 }
 
 /// Atomically write config: serialize, write to a temp file in the same
 /// directory, then rename over the target.
+///
+/// # Errors
+///
+/// Returns an error if serialization or any filesystem operation fails.
 pub fn save(path: &Path, config: &Config) -> Result<()> {
     let config = config.clone().sanitized();
     let dir = path

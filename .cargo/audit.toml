@@ -1,0 +1,7 @@
+[advisories]
+# quick-xml is absent from the shipped x86_64-pc-windows-msvc dependency graph.
+# Remove these exceptions when the unshipped target graph no longer resolves it.
+ignore = [
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

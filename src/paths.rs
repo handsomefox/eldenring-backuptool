@@ -19,46 +19,81 @@ fn env_dir(var: &str) -> Result<PathBuf> {
 }
 
 /// `%APPDATA%` (Roaming).
+///
+/// # Errors
+///
+/// Returns an error if the environment variable is missing or empty.
 pub fn appdata_roaming() -> Result<PathBuf> {
     env_dir("APPDATA")
 }
 
 /// `%LOCALAPPDATA%`.
+///
+/// # Errors
+///
+/// Returns an error if the environment variable is missing or empty.
 pub fn local_appdata() -> Result<PathBuf> {
     env_dir("LOCALAPPDATA")
 }
 
-/// `%APPDATA%\EldenRing` — the save root that holds numeric SteamID64 dirs.
+/// `%APPDATA%\EldenRing` — the save root that holds numeric `SteamID64` dirs.
+///
+/// # Errors
+///
+/// Returns an error if `%APPDATA%` cannot be resolved.
 pub fn elden_ring_root() -> Result<PathBuf> {
     Ok(appdata_roaming()?.join("EldenRing"))
 }
 
 /// `%LOCALAPPDATA%\EldenRingSaveGuard` — config and logs.
+///
+/// # Errors
+///
+/// Returns an error if `%LOCALAPPDATA%` cannot be resolved.
 pub fn app_data_dir() -> Result<PathBuf> {
     Ok(local_appdata()?.join(APP_NAME))
 }
 
+/// Return the application configuration path.
+///
+/// # Errors
+///
+/// Returns an error if the application data directory cannot be resolved.
 pub fn config_path() -> Result<PathBuf> {
     Ok(app_data_dir()?.join("config.json"))
 }
 
+/// Return the application log directory.
+///
+/// # Errors
+///
+/// Returns an error if the application data directory cannot be resolved.
 pub fn log_dir() -> Result<PathBuf> {
     Ok(app_data_dir()?.join("logs"))
 }
 
 /// Documents folder, honoring redirection/OneDrive where possible.
+///
+/// # Errors
+///
+/// Returns an error if the Documents known folder cannot be resolved.
 pub fn documents_dir() -> Result<PathBuf> {
     directories::UserDirs::new()
         .and_then(|u| u.document_dir().map(Path::to_path_buf))
         .context("could not resolve the Documents folder")
 }
 
-/// Default backup destination for a given SteamID64.
+/// Default backup destination for a given `SteamID64`.
+///
+/// # Errors
+///
+/// Returns an error if the Documents known folder cannot be resolved.
 pub fn default_backup_dest(steamid: &str) -> Result<PathBuf> {
     Ok(default_backup_dest_in(&documents_dir()?, steamid))
 }
 
 /// Pure form of [`default_backup_dest`] for testing.
+#[must_use]
 pub fn default_backup_dest_in(documents: &Path, steamid: &str) -> PathBuf {
     documents
         .join("Game Save Backups")
@@ -130,14 +165,18 @@ fn cmp_components(p: &Path) -> Vec<String> {
 
 /// True if `child` is equal to or nested under `ancestor` (lexical, case-
 /// insensitive on Windows).
+#[must_use]
 pub fn is_within(child: &Path, ancestor: &Path) -> bool {
     let c = cmp_components(&normalize_lexical(child));
     let a = cmp_components(&normalize_lexical(ancestor));
     a.len() <= c.len() && c[..a.len()] == a[..]
 }
 
-/// Reject a backup destination that overlaps the live save directory in
-/// either direction.
+/// Validate that a backup destination is absolute and separate from the save tree.
+///
+/// # Errors
+///
+/// Returns an error when a path cannot be resolved safely or the paths overlap.
 pub fn validate_backup_dest(save_dir: &Path, dest: &Path) -> Result<()> {
     let save_dir = resolve_for_comparison(save_dir)
         .with_context(|| format!("resolving save folder {}", save_dir.display()))?;

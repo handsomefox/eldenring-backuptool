@@ -13,14 +13,13 @@ fn main() -> ExitCode {
     let monitor_mode = args
         .first()
         .and_then(|a| a.to_str())
-        .map(|a| a == save_guard::launch::MONITOR_FLAG)
-        .unwrap_or(false);
+        .is_some_and(|a| a == save_guard::launch::MONITOR_FLAG);
 
     init_logging();
 
     if monitor_mode {
         let code = save_guard::monitor::run(args);
-        return ExitCode::from(code as u8);
+        return ExitCode::from(u8::try_from(code).unwrap_or(1));
     }
 
     match gui::run() {
@@ -33,9 +32,10 @@ fn main() -> ExitCode {
 }
 
 fn init_logging() {
-    let level = save_guard::paths::config_path()
-        .map(|p| save_guard::config::load(&p).config.log_level)
-        .unwrap_or_else(|_| "info".to_string());
+    let level = save_guard::paths::config_path().map_or_else(
+        |_| "info".to_string(),
+        |p| save_guard::config::load(&p).config.log_level,
+    );
     if let Ok(dir) = save_guard::paths::log_dir() {
         let _ = save_guard::logging::init(&dir, &level);
     }

@@ -8,7 +8,13 @@
 /// True if a process with the given executable name (e.g. `eldenring.exe`) is
 /// currently running. Case-insensitive.
 #[cfg(windows)]
+#[must_use]
+#[expect(
+    clippy::multiple_unsafe_ops_per_block,
+    reason = "Toolhelp enumeration owns one snapshot handle for the complete iteration"
+)]
 pub fn process_running(exe_name: &str) -> bool {
+    use std::mem::{size_of, zeroed};
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
@@ -22,17 +28,17 @@ pub fn process_running(exe_name: &str) -> bool {
         if snapshot == INVALID_HANDLE_VALUE {
             return false;
         }
-        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut entry: PROCESSENTRY32W = zeroed();
+        entry.dwSize = u32::try_from(size_of::<PROCESSENTRY32W>()).unwrap_or_default();
 
         let mut found = false;
-        if Process32FirstW(snapshot, &mut entry) != 0 {
+        if Process32FirstW(snapshot, &raw mut entry) != 0 {
             loop {
                 if wide_eq_ignore_case(&entry.szExeFile, exe_name) {
                     found = true;
                     break;
                 }
-                if Process32NextW(snapshot, &mut entry) == 0 {
+                if Process32NextW(snapshot, &raw mut entry) == 0 {
                     break;
                 }
             }
@@ -43,6 +49,7 @@ pub fn process_running(exe_name: &str) -> bool {
 }
 
 #[cfg(not(windows))]
+#[must_use]
 pub fn process_running(_exe_name: &str) -> bool {
     false
 }
@@ -57,6 +64,7 @@ fn wide_eq_ignore_case(wide: &[u16], name: &str) -> bool {
 /// Free bytes available to the caller on the volume containing `path`.
 /// Returns `None` if it cannot be determined.
 #[cfg(windows)]
+#[must_use]
 pub fn free_space(path: &std::path::Path) -> Option<u64> {
     use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 
@@ -70,7 +78,7 @@ pub fn free_space(path: &std::path::Path) -> Option<u64> {
     let ok = unsafe {
         GetDiskFreeSpaceExW(
             wide.as_ptr(),
-            &mut free,
+            &raw mut free,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
         )
@@ -79,6 +87,7 @@ pub fn free_space(path: &std::path::Path) -> Option<u64> {
 }
 
 #[cfg(not(windows))]
+#[must_use]
 pub fn free_space(_path: &std::path::Path) -> Option<u64> {
     None
 }
@@ -105,6 +114,11 @@ impl SingleInstance {
     /// Acquire the named lock. Returns `None` if another process already holds
     /// it (i.e. a monitor is already running).
     #[cfg(windows)]
+    #[must_use]
+    #[expect(
+        clippy::multiple_unsafe_ops_per_block,
+        reason = "mutex creation, last-error inspection, and duplicate-handle cleanup are one transaction"
+    )]
     pub fn acquire(name: &str) -> Option<Self> {
         use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
         use windows_sys::Win32::System::Threading::CreateMutexW;
@@ -128,6 +142,7 @@ impl SingleInstance {
     }
 
     #[cfg(not(windows))]
+    #[must_use]
     pub fn acquire(_name: &str) -> Option<Self> {
         Some(Self {})
     }

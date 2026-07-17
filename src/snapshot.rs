@@ -42,6 +42,7 @@ pub enum Reason {
 }
 
 impl Reason {
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Reason::PreLaunch => "pre-launch",
@@ -86,11 +87,13 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// Total original (uncompressed) bytes of the saved files.
+    #[must_use]
     pub fn original_size(&self) -> u64 {
         self.metadata.files.iter().map(|f| f.size).sum()
     }
 
     /// Bytes this snapshot actually occupies on disk (compressed archive).
+    #[must_use]
     pub fn stored_size(&self) -> u64 {
         self.metadata.stored_bytes
     }
@@ -109,6 +112,7 @@ fn fingerprint(files: &[FileHash]) -> Vec<(String, String)> {
     v
 }
 
+#[must_use]
 pub fn snapshots_dir(dest: &Path) -> PathBuf {
     dest.join("snapshots")
 }
@@ -127,7 +131,7 @@ fn source_name(path: &Path) -> Result<String> {
 fn hash_reader(name: &str, reader: &mut impl Read, limit: u64) -> Result<FileHash> {
     let mut hasher = Sha256::new();
     let mut size = 0u64;
-    let mut buf = [0u8; IO_BUFFER_BYTES];
+    let mut buf = vec![0u8; IO_BUFFER_BYTES];
     loop {
         let n = reader.read(&mut buf)?;
         if n == 0 {
@@ -279,6 +283,7 @@ fn is_real_directory(entry: &std::fs::DirEntry) -> bool {
 
 /// List integrity-validated snapshots for one Steam account (temp dirs and
 /// reparse points ignored), sorted oldest → newest.
+#[must_use]
 pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(snapshots_dir(dest)) else {
@@ -301,19 +306,27 @@ pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     out
 }
 
+#[must_use]
 pub fn newest(dest: &Path, steamid: &str) -> Option<Snapshot> {
     list(dest, steamid).pop()
 }
 
 fn system_time_to_utc(t: std::time::SystemTime) -> Option<DateTime<Utc>> {
     DateTime::<Utc>::from_timestamp(
-        t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64,
+        t.duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs()
+            .cast_signed(),
         0,
     )
 }
 
 /// Create a snapshot of `source_files` (the `.sl2` and optional `.sl2.bak`).
 /// Returns `Ok(None)` when content is identical to the newest snapshot (dedup).
+///
+/// # Errors
+///
+/// Returns an error if inputs are unsafe, copying fails, or verification fails.
 pub fn create(
     dest: &Path,
     steamid: &str,
@@ -326,6 +339,10 @@ pub fn create(
 /// Testable form of [`create`]: `after_copy(attempt)` runs after the archive is
 /// written but before the source is re-hashed, letting tests simulate a save
 /// that changes mid-copy.
+///
+/// # Errors
+///
+/// Returns an error if inputs are unsafe, copying fails, or verification fails.
 pub fn create_with_hook(
     dest: &Path,
     steamid: &str,
@@ -448,8 +465,8 @@ fn write_archive(zip_path: &Path, source_files: &[PathBuf]) -> Result<Vec<FileHa
     if source_files.len() > MAX_ARCHIVE_ENTRIES {
         bail!("too many source files");
     }
-    let file = std::fs::File::create(zip_path)
-        .with_context(|| format!("creating {}", zip_path.display()))?;
+    let file =
+        File::create(zip_path).with_context(|| format!("creating {}", zip_path.display()))?;
     let mut zip = zip::ZipWriter::new(file);
     let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -465,9 +482,9 @@ fn write_archive(zip_path: &Path, source_files: &[PathBuf]) -> Result<Vec<FileHa
         }
         zip.start_file(&name, opts)?;
         let mut source = File::open(path)?;
-        let mut hasher = Sha256::new();
+        let mut file_hasher = Sha256::new();
         let mut size = 0u64;
-        let mut buf = [0u8; IO_BUFFER_BYTES];
+        let mut buf = vec![0u8; IO_BUFFER_BYTES];
         loop {
             let n = source.read(&mut buf)?;
             if n == 0 {
@@ -477,12 +494,12 @@ fn write_archive(zip_path: &Path, source_files: &[PathBuf]) -> Result<Vec<FileHa
             if size > MAX_SOURCE_FILE_BYTES {
                 bail!("{name} exceeds the source-file safety limit");
             }
-            hasher.update(&buf[..n]);
+            file_hasher.update(&buf[..n]);
             zip.write_all(&buf[..n])?;
         }
         hashes.push(FileHash {
             name,
-            sha256: finish_sha256(hasher),
+            sha256: finish_sha256(file_hasher),
             size,
         });
     }
@@ -493,7 +510,7 @@ fn write_archive(zip_path: &Path, source_files: &[PathBuf]) -> Result<Vec<FileHa
 
 fn verify_archive(zip_path: &Path, expected: &[FileHash]) -> Result<()> {
     validate_file_hashes(expected)?;
-    let file = std::fs::File::open(zip_path)?;
+    let file = File::open(zip_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
     if archive.len() != expected.len() {
         bail!("archive entry count does not match metadata");
@@ -524,9 +541,13 @@ fn verify_archive(zip_path: &Path, expected: &[FileHash]) -> Result<()> {
 /// Extract an integrity-validated snapshot into a new output directory. Unsafe
 /// names, duplicate entries, oversized content, and existing output files are
 /// rejected.
+///
+/// # Errors
+///
+/// Returns an error if validation, extraction, or any filesystem operation fails.
 pub fn extract(snapshot_dir: &Path, out_dir: &Path) -> Result<()> {
     let snapshot = load_snapshot_dir(snapshot_dir, None)?;
-    let file = std::fs::File::open(snapshot_dir.join(ARCHIVE_FILE))?;
+    let file = File::open(snapshot_dir.join(ARCHIVE_FILE))?;
     let mut archive = zip::ZipArchive::new(file)?;
     std::fs::create_dir_all(out_dir)?;
     if archive.len() != snapshot.metadata.files.len() {
@@ -559,7 +580,7 @@ pub fn extract(snapshot_dir: &Path, out_dir: &Path) -> Result<()> {
         let result = (|| -> Result<FileHash> {
             let mut hasher = Sha256::new();
             let mut size = 0u64;
-            let mut buf = [0u8; IO_BUFFER_BYTES];
+            let mut buf = vec![0u8; IO_BUFFER_BYTES];
             loop {
                 let n = entry.read(&mut buf)?;
                 if n == 0 {
@@ -602,10 +623,10 @@ pub fn extract(snapshot_dir: &Path, out_dir: &Path) -> Result<()> {
 }
 
 fn unique_final_dir(snaps_dir: &Path, created: DateTime<Utc>, files: &[FileHash]) -> PathBuf {
-    let short = files
-        .first()
-        .map(|f| f.sha256[..8.min(f.sha256.len())].to_string())
-        .unwrap_or_else(|| "00000000".to_string());
+    let short = files.first().map_or_else(
+        || "00000000".to_string(),
+        |f| f.sha256[..8.min(f.sha256.len())].to_string(),
+    );
     let base = format!("{}-{}", created.format("%Y%m%d-%H%M%S"), short);
     let mut dir = snaps_dir.join(&base);
     let mut n = 1;
@@ -619,8 +640,7 @@ fn unique_final_dir(snaps_dir: &Path, created: DateTime<Utc>, files: &[FileHash]
 fn now_nanos() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_nanos())
 }
 
 #[cfg(test)]

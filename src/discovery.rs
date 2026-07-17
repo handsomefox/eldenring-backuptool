@@ -1,6 +1,6 @@
 //! Filesystem-only discovery of vanilla Elden Ring save directories.
 //! No Steam APIs, registry, or `loginusers.vdf` — a valid candidate is simply
-//! a numeric SteamID64 folder containing a `.sl2` save.
+//! a numeric `SteamID64` folder containing a `.sl2` save.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -29,9 +29,10 @@ fn primary_sl2(dir: &Path) -> Option<PathBuf> {
             continue;
         }
         // vanilla saves only: `.sl2`, never `.co2` (Seamless Co-op) or `.sl2.bak`.
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let lower = name.to_ascii_lowercase();
-        if lower.ends_with(".sl2") {
+        if p.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("sl2"))
+        {
             sl2.push(p);
         }
     }
@@ -44,8 +45,7 @@ fn primary_sl2(dir: &Path) -> Option<PathBuf> {
         .find(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.eq_ignore_ascii_case("ER0000.sl2"))
-                .unwrap_or(false)
+                .is_some_and(|n| n.eq_ignore_ascii_case("ER0000.sl2"))
         })
         .cloned()
         .or_else(|| sl2.into_iter().next())
@@ -66,12 +66,13 @@ fn candidate_for(dir: &Path, steamid: &str) -> Option<SaveCandidate> {
         save_file,
         bak_file: bak,
         modified: meta.as_ref().and_then(|m| m.modified().ok()),
-        size: meta.map(|m| m.len()).unwrap_or(0),
+        size: meta.map_or(0, |m| m.len()),
     })
 }
 
 /// Enumerate valid save candidates under `elden_root` (`%APPDATA%\EldenRing`),
 /// newest save first. Returns empty if the root is missing.
+#[must_use]
 pub fn discover(elden_root: &Path) -> Vec<SaveCandidate> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(elden_root) else {
@@ -97,6 +98,7 @@ pub fn discover(elden_root: &Path) -> Vec<SaveCandidate> {
 }
 
 /// Find the candidate whose folder name matches `steamid`.
+#[must_use]
 pub fn find(elden_root: &Path, steamid: &str) -> Option<SaveCandidate> {
     discover(elden_root)
         .into_iter()
@@ -111,7 +113,7 @@ mod tests {
         let p = std::env::temp_dir().join(format!(
             "erbt-disc-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
+            SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()

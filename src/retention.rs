@@ -10,6 +10,10 @@ use crate::snapshot::{self, Snapshot};
 /// Delete oldest snapshots beyond `keep`. Returns the directories removed.
 /// Retention is applied only after a new snapshot is finalized, so a live
 /// snapshot is never deleted before its replacement exists.
+///
+/// # Errors
+///
+/// Returns an error if the managed snapshot set cannot be read.
 pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Result<Vec<Snapshot>> {
     let keep = keep.max(1);
     let snaps = snapshot::list(dest, steamid); // oldest → newest, temp dirs excluded

@@ -14,7 +14,7 @@ use save_guard::paths;
 use save_guard::platform;
 use save_guard::snapshot::{self, Reason, Snapshot};
 
-pub fn run() -> eframe::Result<()> {
+pub(crate) fn run() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([720.0, 560.0])
@@ -117,16 +117,16 @@ impl App {
         }
     }
 
-    fn select_account(&mut self, steamid: String) {
+    fn select_account(&mut self, steamid: &str) {
         let previous_default = self
             .config
             .selected_steamid
             .as_deref()
             .and_then(|id| paths::default_backup_dest(id).ok());
         let was_using_default = self.config.backup_dest.as_ref() == previous_default.as_ref();
-        self.config.selected_steamid = Some(steamid.clone());
+        self.config.selected_steamid = Some(steamid.to_string());
         if (self.config.backup_dest.is_none() || was_using_default)
-            && let Ok(dest) = paths::default_backup_dest(&steamid)
+            && let Ok(dest) = paths::default_backup_dest(steamid)
         {
             self.config.backup_dest = Some(dest.clone());
             self.dest_edit = dest.display().to_string();
@@ -157,7 +157,7 @@ impl App {
                 self.status = Some((false, format!("Backed up: {}", dir_name(&snap.dir))));
             }
             Ok(None) => {
-                self.status = Some((false, "Save unchanged — no new backup needed.".into()))
+                self.status = Some((false, "Save unchanged — no new backup needed.".into()));
             }
             Err(e) => self.status = Some((true, format!("Backup failed: {e}"))),
         }
@@ -165,19 +165,13 @@ impl App {
     }
 
     fn apply_settings(&mut self) {
-        let interval: u64 = match self.interval_edit.trim().parse() {
-            Ok(v) => v,
-            Err(_) => {
-                self.status = Some((true, "Interval must be a whole number of seconds.".into()));
-                return;
-            }
+        let Ok(interval) = self.interval_edit.trim().parse::<u64>() else {
+            self.status = Some((true, "Interval must be a whole number of seconds.".into()));
+            return;
         };
-        let retention: usize = match self.retention_edit.trim().parse() {
-            Ok(v) => v,
-            Err(_) => {
-                self.status = Some((true, "Retention must be a whole number.".into()));
-                return;
-            }
+        let Ok(retention) = self.retention_edit.trim().parse::<usize>() else {
+            self.status = Some((true, "Retention must be a whole number.".into()));
+            return;
         };
         if interval < MIN_INTERVAL_SECS {
             self.status = Some((
@@ -256,6 +250,10 @@ impl eframe::App for App {
 }
 
 impl App {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the dashboard is a single immediate-mode UI composition without reusable business logic"
+    )]
     fn dashboard(&mut self, ui: &mut egui::Ui) {
         if let Some(bad) = &self.recovered {
             ui.colored_label(
@@ -327,11 +325,7 @@ impl App {
                     ui.label(dir_name(&c.save_file));
                     ui.end_row();
                     ui.label("Save modified:");
-                    ui.label(
-                        c.modified
-                            .and_then(system_local)
-                            .unwrap_or_else(|| "unknown".into()),
-                    );
+                    ui.label(c.modified.map_or_else(|| "unknown".into(), system_local));
                     ui.end_row();
                     ui.label("Save size:");
                     ui.label(human_size(c.size));
@@ -343,8 +337,7 @@ impl App {
                     self.config
                         .backup_dest
                         .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "(not set)".into()),
+                        .map_or_else(|| "(not set)".into(), |p| p.display().to_string()),
                 );
                 ui.end_row();
 
@@ -361,8 +354,8 @@ impl App {
                 ui.end_row();
 
                 ui.label("Storage used:");
-                let used: u64 = self.snapshots.iter().map(|s| s.stored_size()).sum();
-                let original: u64 = self.snapshots.iter().map(|s| s.original_size()).sum();
+                let used: u64 = self.snapshots.iter().map(Snapshot::stored_size).sum();
+                let original: u64 = self.snapshots.iter().map(Snapshot::original_size).sum();
                 ui.label(if original > 0 {
                     format!(
                         "{} (compressed from {})",
@@ -375,17 +368,16 @@ impl App {
                 ui.end_row();
 
                 ui.label("Last backup:");
-                let last = self
-                    .snapshots
-                    .first()
-                    .map(|s| {
+                let last = self.snapshots.first().map_or_else(
+                    || "never".into(),
+                    |s| {
                         format!(
                             "{} ({})",
                             local_time(s.metadata.created_utc),
                             relative_age(s.metadata.created_utc)
                         )
-                    })
-                    .unwrap_or_else(|| "never".into());
+                    },
+                );
                 ui.label(last);
                 ui.end_row();
 
@@ -411,12 +403,10 @@ impl App {
             let label = format!(
                 "{}  —  saved {}",
                 c.steamid,
-                c.modified
-                    .and_then(system_local)
-                    .unwrap_or_else(|| "unknown".into())
+                c.modified.map_or_else(|| "unknown".into(), system_local)
             );
             if ui.radio(is_sel, label).clicked() && !is_sel {
-                self.select_account(c.steamid.clone());
+                self.select_account(&c.steamid);
             }
         }
     }
@@ -562,11 +552,16 @@ impl App {
 }
 
 fn dir_name(p: &std::path::Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| p.display().to_string())
+    p.file_name().map_or_else(
+        || p.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "human-readable byte sizes are deliberately approximate"
+)]
 fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut v = bytes as f64;
@@ -588,9 +583,9 @@ fn local_time(t: DateTime<Utc>) -> String {
         .to_string()
 }
 
-fn system_local(t: std::time::SystemTime) -> Option<String> {
+fn system_local(t: std::time::SystemTime) -> String {
     let dt: DateTime<Utc> = t.into();
-    Some(local_time(dt))
+    local_time(dt)
 }
 
 fn relative_age(t: DateTime<Utc>) -> String {
