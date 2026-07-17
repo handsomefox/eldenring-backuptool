@@ -112,12 +112,14 @@ fn resolve_target() -> anyhow::Result<Target> {
         .clone()
         .context("no backup destination configured")?;
     let elden_root = crate::paths::elden_ring_root()?;
-    if discovery::find(&elden_root, &steamid).is_none() {
+    let candidate = discovery::find(&elden_root, &steamid);
+    if candidate.is_none() {
         bail!(
             "selected save {steamid} not found under {}",
             elden_root.display()
         );
     }
+    crate::paths::validate_backup_dest(&candidate.expect("checked above").dir, &dest)?;
     Ok(Target {
         config,
         elden_root,
@@ -172,7 +174,7 @@ fn backup(target: &Target, reason: Reason) {
                 reason.label(),
                 snap.dir.display()
             );
-            match retention::apply(&target.dest, target.config.retention) {
+            match retention::apply(&target.dest, &target.steamid, target.config.retention) {
                 Ok(removed) if !removed.is_empty() => {
                     tracing::info!("retention removed {} old snapshot(s)", removed.len());
                 }

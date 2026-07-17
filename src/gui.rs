@@ -94,8 +94,8 @@ impl App {
 
     fn reload_snapshots(&mut self) {
         self.snapshots = match (&self.config.selected_steamid, &self.config.backup_dest) {
-            (Some(_), Some(dest)) => {
-                let mut s = snapshot::list(dest);
+            (Some(steamid), Some(dest)) => {
+                let mut s = snapshot::list(dest, steamid);
                 s.reverse(); // newest first for display
                 s
             }
@@ -118,8 +118,14 @@ impl App {
     }
 
     fn select_account(&mut self, steamid: String) {
+        let previous_default = self
+            .config
+            .selected_steamid
+            .as_deref()
+            .and_then(|id| paths::default_backup_dest(id).ok());
+        let was_using_default = self.config.backup_dest.as_ref() == previous_default.as_ref();
         self.config.selected_steamid = Some(steamid.clone());
-        if self.config.backup_dest.is_none()
+        if (self.config.backup_dest.is_none() || was_using_default)
             && let Ok(dest) = paths::default_backup_dest(&steamid)
         {
             self.config.backup_dest = Some(dest.clone());
@@ -146,7 +152,8 @@ impl App {
         let sources = source_files(&candidate);
         match snapshot::create(&dest, &candidate.steamid, &sources, Reason::Manual) {
             Ok(Some(snap)) => {
-                let _ = save_guard::retention::apply(&dest, self.config.retention);
+                let _ =
+                    save_guard::retention::apply(&dest, &candidate.steamid, self.config.retention);
                 self.status = Some((false, format!("Backed up: {}", dir_name(&snap.dir))));
             }
             Ok(None) => {

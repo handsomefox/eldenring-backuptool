@@ -10,9 +10,9 @@ use crate::snapshot::{self, Snapshot};
 /// Delete oldest snapshots beyond `keep`. Returns the directories removed.
 /// Retention is applied only after a new snapshot is finalized, so a live
 /// snapshot is never deleted before its replacement exists.
-pub fn apply(dest: &Path, keep: usize) -> Result<Vec<Snapshot>> {
+pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Result<Vec<Snapshot>> {
     let keep = keep.max(1);
-    let snaps = snapshot::list(dest); // oldest → newest, temp dirs excluded
+    let snaps = snapshot::list(dest, steamid); // oldest → newest, temp dirs excluded
     if snaps.len() <= keep {
         return Ok(Vec::new());
     }
@@ -66,9 +66,9 @@ mod tests {
     fn keeps_newest_n() {
         let d = dest();
         make_snapshots(&d, 5);
-        let removed = apply(&d, 3).unwrap();
+        let removed = apply(&d, "111", 3).unwrap();
         assert_eq!(removed.len(), 2);
-        let remaining = snapshot::list(&d);
+        let remaining = snapshot::list(&d, "111");
         assert_eq!(remaining.len(), 3);
         // The survivors are the newest three.
         let newest = remaining.last().unwrap();
@@ -81,8 +81,8 @@ mod tests {
     fn under_limit_deletes_nothing() {
         let d = dest();
         make_snapshots(&d, 2);
-        assert!(apply(&d, 60).unwrap().is_empty());
-        assert_eq!(snapshot::list(&d).len(), 2);
+        assert!(apply(&d, "111", 60).unwrap().is_empty());
+        assert_eq!(snapshot::list(&d, "111").len(), 2);
     }
 
     #[test]
@@ -92,8 +92,30 @@ mod tests {
         // A stray temp dir must be neither counted nor deleted by retention.
         let stray = snapshot::snapshots_dir(&d).join(".tmp-999-999");
         std::fs::create_dir_all(&stray).unwrap();
-        apply(&d, 1).unwrap();
+        apply(&d, "111", 1).unwrap();
         assert!(stray.exists());
-        assert_eq!(snapshot::list(&d).len(), 1);
+        assert_eq!(snapshot::list(&d, "111").len(), 1);
+    }
+
+    #[test]
+    fn retention_never_removes_another_accounts_snapshots() {
+        let d = dest();
+        let src = d.join("ER0000.sl2");
+        for i in 0..2 {
+            std::fs::write(&src, format!("account-111-{i}")).unwrap();
+            create(&d, "111", std::slice::from_ref(&src), Reason::Periodic)
+                .unwrap()
+                .unwrap();
+        }
+        for i in 0..2 {
+            std::fs::write(&src, format!("account-222-{i}")).unwrap();
+            create(&d, "222", std::slice::from_ref(&src), Reason::Periodic)
+                .unwrap()
+                .unwrap();
+        }
+
+        assert_eq!(apply(&d, "111", 1).unwrap().len(), 1);
+        assert_eq!(snapshot::list(&d, "111").len(), 1);
+        assert_eq!(snapshot::list(&d, "222").len(), 2);
     }
 }

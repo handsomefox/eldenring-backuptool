@@ -82,6 +82,43 @@ fn normalize_lexical(p: &Path) -> PathBuf {
     out
 }
 
+/// Resolve every existing ancestor through the filesystem, then append any
+/// not-yet-created tail lexically. This catches symlink/junction overlap while
+/// still allowing a new destination folder.
+fn resolve_for_comparison(path: &Path) -> Result<PathBuf> {
+    if !path.is_absolute() {
+        bail!("the backup destination must be an absolute path");
+    }
+    let normalized = normalize_lexical(path);
+    let mut current = normalized.as_path();
+    let mut tail = Vec::new();
+    loop {
+        match std::fs::canonicalize(current) {
+            Ok(mut resolved) => {
+                for component in tail.iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(normalize_lexical(&resolved));
+            }
+            Err(error) => {
+                let name = current.file_name().with_context(|| {
+                    format!(
+                        "could not resolve any existing ancestor of {}: {error}",
+                        path.display()
+                    )
+                })?;
+                tail.push(name.to_os_string());
+                current = current.parent().with_context(|| {
+                    format!(
+                        "could not resolve any existing ancestor of {}",
+                        path.display()
+                    )
+                })?;
+            }
+        }
+    }
+}
+
 fn cmp_components(p: &Path) -> Vec<String> {
     p.components()
         .map(|c| {
@@ -102,10 +139,14 @@ pub fn is_within(child: &Path, ancestor: &Path) -> bool {
 /// Reject a backup destination that overlaps the live save directory in
 /// either direction.
 pub fn validate_backup_dest(save_dir: &Path, dest: &Path) -> Result<()> {
-    if is_within(dest, save_dir) {
+    let save_dir = resolve_for_comparison(save_dir)
+        .with_context(|| format!("resolving save folder {}", save_dir.display()))?;
+    let dest = resolve_for_comparison(dest)
+        .with_context(|| format!("resolving backup destination {}", dest.display()))?;
+    if is_within(&dest, &save_dir) {
         bail!("the backup destination is inside the Elden Ring save folder");
     }
-    if is_within(save_dir, dest) {
+    if is_within(&save_dir, &dest) {
         bail!("the Elden Ring save folder is inside the backup destination");
     }
     Ok(())
@@ -148,5 +189,31 @@ mod tests {
     fn default_dest_layout() {
         let d = default_backup_dest_in(Path::new("/home/u/Documents"), "76561198000000000");
         assert!(d.ends_with("Game Save Backups/Elden Ring/76561198000000000"));
+    }
+
+    #[test]
+    fn guard_rejects_relative_destination() {
+        assert!(validate_backup_dest(Path::new("/save/account"), Path::new("backups")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn guard_resolves_symlinked_destination() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "erbt-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let save = root.join("save");
+        std::fs::create_dir_all(&save).unwrap();
+        let disguised = root.join("disguised");
+        symlink(&save, &disguised).unwrap();
+
+        assert!(validate_backup_dest(&save, &disguised.join("backups")).is_err());
     }
 }

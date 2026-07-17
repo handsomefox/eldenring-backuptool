@@ -7,6 +7,8 @@
 //! finalizes a partial copy, and dedups on file *content*, not modification
 //! time. Hashes recorded in metadata are of the **original** save bytes.
 
+use std::collections::HashSet;
+use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -18,9 +20,15 @@ use sha2::{Digest, Sha256};
 
 use crate::APP_VERSION;
 
-pub const METADATA_VERSION: u32 = 2;
+pub const METADATA_VERSION: u32 = 1;
 pub const METADATA_FILE: &str = "metadata.json";
 pub const ARCHIVE_FILE: &str = "save.zip";
+pub const MAX_SOURCE_FILE_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_TOTAL_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
+const MAX_METADATA_BYTES: u64 = 1024 * 1024;
+const MAX_ARCHIVE_BYTES: u64 = MAX_TOTAL_SOURCE_BYTES + 16 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES: usize = 8;
+const IO_BUFFER_BYTES: usize = 64 * 1024;
 const TMP_PREFIX: &str = ".tmp-";
 const MAX_COPY_ATTEMPTS: u32 = 4;
 
@@ -66,6 +74,8 @@ pub struct Metadata {
     pub archive: String,
     /// On-disk size of the compressed archive.
     pub stored_bytes: u64,
+    /// SHA-256 of the complete compressed archive.
+    pub archive_sha256: String,
 }
 
 #[derive(Debug, Clone)]
@@ -103,62 +113,185 @@ pub fn snapshots_dir(dest: &Path) -> PathBuf {
     dest.join("snapshots")
 }
 
-fn hash_bytes(name: &str, bytes: &[u8]) -> FileHash {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    FileHash {
-        name: name.to_string(),
-        sha256: format!("{:x}", hasher.finalize()),
-        size: bytes.len() as u64,
-    }
-}
-
-/// Read a source file, returning its recorded hash and its bytes.
-fn read_source(path: &Path) -> Result<(FileHash, Vec<u8>)> {
-    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+fn source_name(path: &Path) -> Result<String> {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
         .context("source file has no valid name")?;
-    Ok((hash_bytes(name, &bytes), bytes))
+    if name.contains(['/', '\\']) {
+        bail!("source file has an unsafe name: {name}");
+    }
+    Ok(name.to_string())
+}
+
+fn hash_reader(name: &str, reader: &mut impl Read, limit: u64) -> Result<FileHash> {
+    let mut hasher = Sha256::new();
+    let mut size = 0u64;
+    let mut buf = [0u8; IO_BUFFER_BYTES];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        size = size
+            .checked_add(n as u64)
+            .context("file size overflow while hashing")?;
+        if size > limit {
+            bail!("{name} exceeds the {limit}-byte safety limit");
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(FileHash {
+        name: name.to_string(),
+        sha256: format!("{:x}", hasher.finalize()),
+        size,
+    })
 }
 
 fn hash_source(path: &Path) -> Result<FileHash> {
-    Ok(read_source(path)?.0)
+    let name = source_name(path)?;
+    let mut file = File::open(path).with_context(|| format!("reading {}", path.display()))?;
+    hash_reader(&name, &mut file, MAX_SOURCE_FILE_BYTES)
 }
 
 fn hash_sources(files: &[PathBuf]) -> Result<Vec<FileHash>> {
-    files.iter().map(|p| hash_source(p)).collect()
+    let hashes: Vec<FileHash> = files
+        .iter()
+        .map(|p| hash_source(p))
+        .collect::<Result<_>>()?;
+    validate_file_hashes(&hashes)?;
+    Ok(hashes)
 }
 
-/// List finalized snapshots (temp dirs ignored), sorted oldest → newest.
-/// Directories with unreadable/invalid metadata are skipped.
-pub fn list(dest: &Path) -> Vec<Snapshot> {
+fn validate_file_hashes(files: &[FileHash]) -> Result<()> {
+    if files.is_empty() || files.len() > MAX_ARCHIVE_ENTRIES {
+        bail!("snapshot must contain 1..={MAX_ARCHIVE_ENTRIES} files");
+    }
+    let mut names = HashSet::new();
+    let mut total = 0u64;
+    for file in files {
+        if file.name.is_empty()
+            || file.name.contains(['/', '\\'])
+            || Path::new(&file.name).file_name().and_then(|n| n.to_str())
+                != Some(file.name.as_str())
+        {
+            bail!("unsafe snapshot file name: {}", file.name);
+        }
+        if !names.insert(file.name.as_str()) {
+            bail!("duplicate snapshot file name: {}", file.name);
+        }
+        if file.size > MAX_SOURCE_FILE_BYTES {
+            bail!("snapshot file {} exceeds the safety limit", file.name);
+        }
+        if file.sha256.len() != 64 || !file.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("invalid SHA-256 for {}", file.name);
+        }
+        total = total
+            .checked_add(file.size)
+            .context("snapshot size overflow")?;
+    }
+    if total > MAX_TOTAL_SOURCE_BYTES {
+        bail!("snapshot exceeds the total-size safety limit");
+    }
+    Ok(())
+}
+
+fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>> {
+    let file = File::open(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        bail!("{} exceeds the {limit}-byte safety limit", path.display());
+    }
+    Ok(bytes)
+}
+
+fn hash_file(path: &Path, name: &str, limit: u64) -> Result<FileHash> {
+    let mut file = File::open(path).with_context(|| format!("reading {}", path.display()))?;
+    hash_reader(name, &mut file, limit)
+}
+
+fn load_snapshot_dir(dir: &Path, expected_steamid: Option<&str>) -> Result<Snapshot> {
+    let bytes = read_limited(&dir.join(METADATA_FILE), MAX_METADATA_BYTES)?;
+    let metadata: Metadata = serde_json::from_slice(&bytes)?;
+    if metadata.format_version != METADATA_VERSION {
+        bail!("unsupported snapshot metadata version");
+    }
+    if let Some(expected) = expected_steamid
+        && metadata.steamid != expected
+    {
+        bail!("snapshot belongs to a different Steam account");
+    }
+    if metadata.archive != ARCHIVE_FILE {
+        bail!("unexpected snapshot archive name");
+    }
+    validate_file_hashes(&metadata.files)?;
+
+    let archive_path = dir.join(ARCHIVE_FILE);
+    let archive_meta = std::fs::metadata(&archive_path)?;
+    if !archive_meta.is_file() || archive_meta.len() != metadata.stored_bytes {
+        bail!("snapshot archive is missing or has the wrong size");
+    }
+    if metadata.stored_bytes > MAX_ARCHIVE_BYTES {
+        bail!("snapshot archive exceeds the safety limit");
+    }
+    let actual = hash_file(&archive_path, ARCHIVE_FILE, MAX_ARCHIVE_BYTES)?;
+    if actual.sha256 != metadata.archive_sha256 {
+        bail!("snapshot archive hash does not match metadata");
+    }
+    Ok(Snapshot {
+        dir: dir.to_path_buf(),
+        metadata,
+    })
+}
+
+fn is_real_directory(entry: &std::fs::DirEntry) -> bool {
+    let Ok(file_type) = entry.file_type() else {
+        return false;
+    };
+    if !file_type.is_dir() || file_type.is_symlink() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
+            return false;
+        };
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return false;
+        }
+    }
+    true
+}
+
+/// List integrity-validated snapshots for one Steam account (temp dirs and
+/// reparse points ignored), sorted oldest → newest.
+pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(snapshots_dir(dest)) else {
         return out;
     };
     for entry in entries.flatten() {
-        let dir = entry.path();
-        if !dir.is_dir() {
+        if !is_real_directory(&entry) {
             continue;
         }
+        let dir = entry.path();
         let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if name.starts_with(TMP_PREFIX) {
             continue;
         }
-        if let Ok(bytes) = std::fs::read(dir.join(METADATA_FILE))
-            && let Ok(metadata) = serde_json::from_slice::<Metadata>(&bytes)
-        {
-            out.push(Snapshot { dir, metadata });
+        if let Ok(snapshot) = load_snapshot_dir(&dir, Some(steamid)) {
+            out.push(snapshot);
         }
     }
     out.sort_by_key(|s| s.metadata.created_utc);
     out
 }
 
-pub fn newest(dest: &Path) -> Option<Snapshot> {
-    list(dest).pop()
+pub fn newest(dest: &Path, steamid: &str) -> Option<Snapshot> {
+    list(dest, steamid).pop()
 }
 
 fn system_time_to_utc(t: std::time::SystemTime) -> Option<DateTime<Utc>> {
@@ -204,7 +337,7 @@ pub fn create_with_hook(
 
     // Fast path: skip the copy if the source already matches the newest
     // snapshot. Authoritative hashes still come from the stable copy below.
-    let prev = newest(dest);
+    let prev = newest(dest, steamid);
     if let Some(p) = &prev {
         let quick = hash_sources(source_files)?;
         if p.fingerprint() == fingerprint(&quick) {
@@ -219,7 +352,7 @@ pub fn create_with_hook(
             now_nanos()
         ));
         match try_archive(&tmp, source_files, &mut after_copy, attempt) {
-            Ok(Some((hashes, stored_bytes))) => {
+            Ok(Some((hashes, stored_bytes, archive_sha256))) => {
                 if let Some(p) = &prev
                     && p.fingerprint() == fingerprint(&hashes)
                 {
@@ -241,6 +374,7 @@ pub fn create_with_hook(
                     files: hashes.clone(),
                     archive: ARCHIVE_FILE.to_string(),
                     stored_bytes,
+                    archive_sha256,
                 };
                 let json = serde_json::to_vec_pretty(&metadata)?;
                 std::fs::write(tmp.join(METADATA_FILE), &json)?;
@@ -277,78 +411,181 @@ fn try_archive(
     source_files: &[PathBuf],
     after_copy: &mut impl FnMut(u32),
     attempt: u32,
-) -> Result<Option<(Vec<FileHash>, u64)>> {
-    // Read every source once (hash + bytes for compression).
-    let mut loaded: Vec<(String, Vec<u8>, FileHash)> = Vec::new();
-    for src in source_files {
-        let (hash, bytes) = read_source(src)?;
-        loaded.push((hash.name.clone(), bytes, hash));
-    }
-    let before: Vec<FileHash> = loaded.iter().map(|(_, _, h)| h.clone()).collect();
-
+) -> Result<Option<(Vec<FileHash>, u64, String)>> {
     std::fs::create_dir_all(tmp).with_context(|| format!("creating {}", tmp.display()))?;
     let zip_path = tmp.join(ARCHIVE_FILE);
-    write_archive(&zip_path, &loaded)?;
+    let archived = write_archive(&zip_path, source_files)?;
 
     after_copy(attempt);
 
     // The archive must decompress back to exactly the bytes we hashed.
-    verify_archive(&zip_path, &before)?;
+    verify_archive(&zip_path, &archived)?;
 
     // The source must be unchanged since we read it.
-    if hash_sources(source_files)? != before {
+    if hash_sources(source_files)? != archived {
         return Ok(None);
     }
     let stored_bytes = std::fs::metadata(&zip_path)?.len();
-    Ok(Some((before, stored_bytes)))
+    if stored_bytes > MAX_ARCHIVE_BYTES {
+        bail!("snapshot archive exceeds the safety limit");
+    }
+    let archive_sha256 = hash_file(&zip_path, ARCHIVE_FILE, MAX_ARCHIVE_BYTES)?.sha256;
+    Ok(Some((archived, stored_bytes, archive_sha256)))
 }
 
-fn write_archive(zip_path: &Path, files: &[(String, Vec<u8>, FileHash)]) -> Result<()> {
+fn write_archive(zip_path: &Path, source_files: &[PathBuf]) -> Result<Vec<FileHash>> {
+    if source_files.len() > MAX_ARCHIVE_ENTRIES {
+        bail!("too many source files");
+    }
     let file = std::fs::File::create(zip_path)
         .with_context(|| format!("creating {}", zip_path.display()))?;
     let mut zip = zip::ZipWriter::new(file);
     let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
-    for (name, bytes, _) in files {
-        zip.start_file(name, opts)?;
-        zip.write_all(bytes)?;
+    let mut hashes = Vec::with_capacity(source_files.len());
+    let mut names = HashSet::new();
+    for path in source_files {
+        let name = source_name(path)?;
+        if !names.insert(name.clone()) {
+            bail!("duplicate source file name: {name}");
+        }
+        if std::fs::metadata(path)?.len() > MAX_SOURCE_FILE_BYTES {
+            bail!("{name} exceeds the source-file safety limit");
+        }
+        zip.start_file(&name, opts)?;
+        let mut source = File::open(path)?;
+        let mut hasher = Sha256::new();
+        let mut size = 0u64;
+        let mut buf = [0u8; IO_BUFFER_BYTES];
+        loop {
+            let n = source.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            size = size.checked_add(n as u64).context("source size overflow")?;
+            if size > MAX_SOURCE_FILE_BYTES {
+                bail!("{name} exceeds the source-file safety limit");
+            }
+            hasher.update(&buf[..n]);
+            zip.write_all(&buf[..n])?;
+        }
+        hashes.push(FileHash {
+            name,
+            sha256: format!("{:x}", hasher.finalize()),
+            size,
+        });
     }
     zip.finish()?;
-    Ok(())
+    validate_file_hashes(&hashes)?;
+    Ok(hashes)
 }
 
 fn verify_archive(zip_path: &Path, expected: &[FileHash]) -> Result<()> {
+    validate_file_hashes(expected)?;
     let file = std::fs::File::open(zip_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
-    for exp in expected {
-        let mut entry = archive
-            .by_name(&exp.name)
-            .with_context(|| format!("archive missing {}", exp.name))?;
-        let mut buf = Vec::with_capacity(exp.size as usize);
-        entry.read_to_end(&mut buf)?;
-        if &hash_bytes(&exp.name, &buf) != exp {
-            bail!("archive verification failed for {}", exp.name);
+    if archive.len() != expected.len() {
+        bail!("archive entry count does not match metadata");
+    }
+    let mut seen = HashSet::new();
+    let mut total = 0u64;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let name = entry.name().to_string();
+        if entry.is_dir() || name.contains(['/', '\\']) || !seen.insert(name.clone()) {
+            bail!("unsafe or duplicate archive entry: {name}");
+        }
+        let exp = expected
+            .iter()
+            .find(|file| file.name == name)
+            .with_context(|| format!("unexpected archive entry {name}"))?;
+        let actual = hash_reader(&name, &mut entry, MAX_SOURCE_FILE_BYTES)?;
+        total = total
+            .checked_add(actual.size)
+            .context("archive size overflow")?;
+        if total > MAX_TOTAL_SOURCE_BYTES || &actual != exp {
+            bail!("archive verification failed for {name}");
         }
     }
     Ok(())
 }
 
-/// Extract a snapshot's saved files into `out_dir` (used by tests and any
-/// future automated restore). Entry names are reduced to their file name to
-/// resist path traversal.
+/// Extract an integrity-validated snapshot into a new output directory. Unsafe
+/// names, duplicate entries, oversized content, and existing output files are
+/// rejected.
 pub fn extract(snapshot_dir: &Path, out_dir: &Path) -> Result<()> {
+    let snapshot = load_snapshot_dir(snapshot_dir, None)?;
     let file = std::fs::File::open(snapshot_dir.join(ARCHIVE_FILE))?;
     let mut archive = zip::ZipArchive::new(file)?;
     std::fs::create_dir_all(out_dir)?;
+    if archive.len() != snapshot.metadata.files.len() {
+        bail!("archive entry count does not match metadata");
+    }
+    let mut seen = HashSet::new();
+    let mut total = 0u64;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let name = entry.name().to_string();
-        let safe = Path::new(&name)
-            .file_name()
-            .with_context(|| format!("unsafe archive entry {name}"))?;
-        let mut buf = Vec::new();
-        entry.read_to_end(&mut buf)?;
-        std::fs::write(out_dir.join(safe), buf)?;
+        if entry.is_dir()
+            || name.contains(['/', '\\'])
+            || Path::new(&name).file_name().and_then(|n| n.to_str()) != Some(name.as_str())
+            || !seen.insert(name.clone())
+        {
+            bail!("unsafe or duplicate archive entry: {name}");
+        }
+        let expected = snapshot
+            .metadata
+            .files
+            .iter()
+            .find(|file| file.name == name)
+            .with_context(|| format!("unexpected archive entry {name}"))?;
+        let output_path = out_dir.join(&name);
+        let mut output = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&output_path)
+            .with_context(|| format!("creating {}", output_path.display()))?;
+        let result = (|| -> Result<FileHash> {
+            let mut hasher = Sha256::new();
+            let mut size = 0u64;
+            let mut buf = [0u8; IO_BUFFER_BYTES];
+            loop {
+                let n = entry.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                size = size
+                    .checked_add(n as u64)
+                    .context("archive size overflow")?;
+                if size > MAX_SOURCE_FILE_BYTES {
+                    bail!("archive entry {name} exceeds the safety limit");
+                }
+                hasher.update(&buf[..n]);
+                output.write_all(&buf[..n])?;
+            }
+            output.sync_all()?;
+            Ok(FileHash {
+                name: name.clone(),
+                sha256: format!("{:x}", hasher.finalize()),
+                size,
+            })
+        })();
+        let actual = match result {
+            Ok(actual) => actual,
+            Err(error) => {
+                drop(output);
+                let _ = std::fs::remove_file(&output_path);
+                return Err(error);
+            }
+        };
+        total = total
+            .checked_add(actual.size)
+            .context("archive size overflow")?;
+        if total > MAX_TOTAL_SOURCE_BYTES || &actual != expected {
+            drop(output);
+            let _ = std::fs::remove_file(&output_path);
+            bail!("archive verification failed for {name}");
+        }
     }
     Ok(())
 }
@@ -416,7 +653,9 @@ mod tests {
     }
 
     fn extracted(snap: &Snapshot, name: &str) -> Vec<u8> {
-        let out = snap.dir.join("extracted");
+        let out = snap
+            .dir
+            .join(format!("extracted-{}", name.replace('.', "-")));
         extract(&snap.dir, &out).unwrap();
         std::fs::read(out.join(name)).unwrap()
     }
@@ -478,7 +717,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert_eq!(list(&e.dest).len(), 1);
+        assert_eq!(list(&e.dest, "111").len(), 1);
     }
 
     #[test]
@@ -494,7 +733,7 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
-        assert_eq!(list(&e.dest).len(), 2);
+        assert_eq!(list(&e.dest, "111").len(), 2);
     }
 
     #[test]
@@ -510,7 +749,7 @@ mod tests {
         .unwrap()
         .expect("eventually stable");
         assert_eq!(extracted(&snap, "ER0000.sl2"), b"changed-mid-copy");
-        assert_eq!(list(&e.dest).len(), 1);
+        assert_eq!(list(&e.dest, "111").len(), 1);
     }
 
     #[test]
@@ -532,5 +771,51 @@ mod tests {
         let e = env();
         let missing = e.save_dir.join("nope.sl2");
         assert!(create(&e.dest, "111", &[missing], Reason::Manual).is_err());
+    }
+
+    #[test]
+    fn snapshots_are_scoped_by_account() {
+        let e = env();
+        let src = sources(&e, false);
+        create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        write(&src[0], b"another-account-save");
+        create(&e.dest, "222", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+
+        let first = list(&e.dest, "111");
+        let second = list(&e.dest, "222");
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), 1);
+        assert_eq!(first[0].metadata.steamid, "111");
+        assert_eq!(second[0].metadata.steamid, "222");
+    }
+
+    #[test]
+    fn corrupt_archive_is_ignored_and_replaced() {
+        let e = env();
+        let src = sources(&e, false);
+        let first = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        std::fs::remove_file(first.dir.join(ARCHIVE_FILE)).unwrap();
+        assert!(list(&e.dest, "111").is_empty());
+
+        let replacement = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .expect("invalid metadata must not suppress a replacement");
+        assert!(replacement.dir.join(ARCHIVE_FILE).is_file());
+        assert_eq!(list(&e.dest, "111").len(), 1);
+    }
+
+    #[test]
+    fn oversized_source_is_rejected_before_copy() {
+        let e = env();
+        let source = e.save_dir.join("ER0000.sl2");
+        let file = File::create(&source).unwrap();
+        file.set_len(MAX_SOURCE_FILE_BYTES + 1).unwrap();
+        assert!(create(&e.dest, "111", &[source], Reason::Manual).is_err());
     }
 }
