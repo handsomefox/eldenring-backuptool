@@ -211,17 +211,13 @@ mod tests {
 
     #[test]
     fn guard_rejects_overlap() {
-        let save = Path::new("/save/76561198000000000");
-        assert!(validate_backup_dest(save, Path::new("/save/76561198000000000/backups")).is_err());
-        assert!(validate_backup_dest(save, Path::new("/documents/backups")).is_ok());
+        let root = std::env::temp_dir().join("eldenring-backuptool-path-guard-test");
+        let save = root.join("save/76561198000000000");
+        let backups = root.join("documents/backups");
+        assert!(validate_backup_dest(&save, &save.join("backups")).is_err());
+        assert!(validate_backup_dest(&save, &backups).is_ok());
         // save inside dest
-        assert!(
-            validate_backup_dest(
-                Path::new("/documents/backups/save"),
-                Path::new("/documents/backups")
-            )
-            .is_err()
-        );
+        assert!(validate_backup_dest(&backups.join("save"), &backups).is_err());
     }
 
     #[test]
