@@ -1,6 +1,6 @@
 [package]
 name = "eldenring-backuptool"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "Automatic versioned backups of vanilla Elden Ring saves (Elden Ring Save Guard)"
 license = "MIT"
