@@ -91,7 +91,8 @@ Restore is done by hand, so you stay in full control:
 Default: `Documents\Game Save Backups\Elden Ring\<SteamID64>\snapshots\`. You can change it on
 the **Settings** tab. Each snapshot folder is named by date and time and contains `save.zip` (the
 compressed save files — Elden Ring saves are mostly empty space and shrink roughly 15–20×) plus a
-small `metadata.json` with verification hashes.
+   small `metadata.json` with hashes for both the original saves and the complete archive. Existing
+   snapshots are rechecked before they are displayed, used for deduplication, or pruned.
 
 ## Uninstalling
 
@@ -116,7 +117,7 @@ small `metadata.json` with verification hashes.
 
 ## Development
 
-Requires stable Rust (edition 2024). This repo cross-builds Windows binaries from Linux with
+Requires Rust 1.97.1 (edition 2024, pinned in CI). This repo cross-builds Windows binaries from Linux with
 [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin); on Windows you can use the normal
 MSVC target.
 

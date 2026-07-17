@@ -214,8 +214,8 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::Panel::top("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("🛡 Elden Ring Save Guard");
                 ui.separator();
@@ -238,7 +238,7 @@ impl eframe::App for App {
                 egui::Color32::from_rgb(80, 160, 100)
             };
             let prefix = if *is_err { "Error" } else { "OK" };
-            egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            egui::Panel::bottom("status").show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.colored_label(color, format!("{prefix}:"));
                     ui.label(msg);
@@ -246,7 +246,7 @@ impl eframe::App for App {
             });
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| match self.tab {
+        egui::CentralPanel::default().show(ui, |ui| match self.tab {
             Tab::Dashboard => self.dashboard(ui),
             Tab::Backups => self.backups(ui),
             Tab::Settings => self.settings(ui),

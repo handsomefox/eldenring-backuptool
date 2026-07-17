@@ -143,9 +143,20 @@ fn hash_reader(name: &str, reader: &mut impl Read, limit: u64) -> Result<FileHas
     }
     Ok(FileHash {
         name: name.to_string(),
-        sha256: format!("{:x}", hasher.finalize()),
+        sha256: finish_sha256(hasher),
         size,
     })
+}
+
+fn finish_sha256(hasher: Sha256) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn hash_source(path: &Path) -> Result<FileHash> {
@@ -471,7 +482,7 @@ fn write_archive(zip_path: &Path, source_files: &[PathBuf]) -> Result<Vec<FileHa
         }
         hashes.push(FileHash {
             name,
-            sha256: format!("{:x}", hasher.finalize()),
+            sha256: finish_sha256(hasher),
             size,
         });
     }
@@ -566,7 +577,7 @@ pub fn extract(snapshot_dir: &Path, out_dir: &Path) -> Result<()> {
             output.sync_all()?;
             Ok(FileHash {
                 name: name.clone(),
-                sha256: format!("{:x}", hasher.finalize()),
+                sha256: finish_sha256(hasher),
                 size,
             })
         })();

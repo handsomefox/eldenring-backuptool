@@ -9,17 +9,30 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.97.1
+
+permissions:
+  contents: read
 
 jobs:
   check:
     name: Format, lint, test (portable core)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt,clippy
+      - run: rustup default "$RUST_VERSION"
+      - name: Audit dependencies
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          # These only reach the non-Windows Wayland build graph; the supported
+          # x86_64-pc-windows-msvc graph contains no quick-xml package.
+          cargo audit \
+            --ignore RUSTSEC-2026-0194 \
+            --ignore RUSTSEC-2026-0195
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy (core)
@@ -29,24 +42,24 @@ jobs:
 
   build-windows:
     name: Build & package Windows x86-64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          targets: x86_64-pc-windows-msvc
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy
+      - run: rustup default "$RUST_VERSION"
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm zip
-          cargo install cargo-xwin --locked
+          sudo apt-get install -y --no-install-recommends clang llvm zip
+          cargo install cargo-xwin --version 0.23.0 --locked
       - name: Clippy (Windows target, all)
         run: cargo xwin clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings
       - name: Package
         run: bash scripts/package-windows.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: eldenring-save-guard-windows
           path: |
@@ -55,26 +68,27 @@ jobs:
 
   release:
     name: Attach release artifacts
-    needs: build-windows
+    needs: [check, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          targets: x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang llvm zip
-          cargo install cargo-xwin --locked
-      - name: Package
-        run: bash scripts/package-windows.sh
-      - uses: softprops/action-gh-release@v2
+          name: eldenring-save-guard-windows
+          path: dist
+      - name: Attest release assets
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
         with:
-          files: |
-            dist/*.zip
-            dist/*.sha256
+          subject-path: dist/*
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --verify-tag
+          --title "$GITHUB_REF_NAME"
+          --generate-notes
