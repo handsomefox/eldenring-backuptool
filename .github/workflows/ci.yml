@@ -48,7 +48,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust toolchain
-        run: rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rust-src
+        run: >-
+          rustup toolchain install "$RUST_VERSION"
+          --profile minimal
+          --component clippy,rust-src
+          --target x86_64-pc-windows-msvc
       - run: rustup default "$RUST_VERSION"
       - name: Install build tools
         run: |
