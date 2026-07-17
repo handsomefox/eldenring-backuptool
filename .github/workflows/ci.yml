@@ -19,7 +19,7 @@ jobs:
     name: Format, lint, test (portable core)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           persist-credentials: false
       - name: Install Rust toolchain
@@ -44,11 +44,11 @@ jobs:
     name: Build & package Windows x86-64
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           persist-credentials: false
       - name: Install Rust toolchain
-        run: rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rust-src
       - run: rustup default "$RUST_VERSION"
       - name: Install build tools
         run: |
