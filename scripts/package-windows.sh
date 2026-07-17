@@ -1,41 +1,44 @@
 #!/usr/bin/env bash
-# Build the Windows x86-64 release and package a portable ZIP + SHA-256.
-# Requires: cargo-xwin, zip, sha256sum.
 set -euo pipefail
 
-TARGET="x86_64-pc-windows-msvc"
-NAME="eldenring-save-guard"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
+readonly CARGO_XWIN_VERSION="0.23.0"
+readonly product="eldenring-backuptool"
+readonly target="x86_64-pc-windows-msvc"
 
-VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-# Resolve the real target dir (may be redirected via cargo config or env).
-TARGET_DIR="$(cargo metadata --format-version 1 --no-deps 2>/dev/null \
-  | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
-TARGET_DIR="${TARGET_DIR:-${CARGO_TARGET_DIR:-target}}"
-STAGE="dist/${NAME}"
-ZIP="dist/${NAME}-v${VERSION}-${TARGET}.zip"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+target_dir="${CARGO_TARGET_DIR:-$root/target}"
+artifact="$target_dir/$target/release/$product.exe"
+dist="$root/dist"
+zip_name="$product-windows-x86_64.zip"
 
-echo ">> building release for ${TARGET}"
-cargo xwin build --release --target "${TARGET}"
+cargo_xwin_version="$(cargo xwin --version)"
+if [[ ! "$cargo_xwin_version" =~ [[:space:]]${CARGO_XWIN_VERSION//./\.}$ ]]; then
+  echo "cargo-xwin $CARGO_XWIN_VERSION is required; found: $cargo_xwin_version" >&2
+  exit 1
+fi
 
-EXE="${TARGET_DIR}/${TARGET}/release/eldenring-backuptool.exe"
-[ -f "$EXE" ] || { echo "!! exe not found at $EXE" >&2; exit 1; }
+cd "$root"
+rm -rf "$dist"
+mkdir -p "$dist"
 
-echo ">> staging into ${STAGE}"
-rm -rf "dist"
-mkdir -p "${STAGE}"
-cp "$EXE" "${STAGE}/"
-cp README.md LICENSE SAFETY.md "${STAGE}/"
+CARGO_TARGET_DIR="$target_dir" cargo xwin build --workspace --release --locked --target "$target"
+if [[ ! -f "$artifact" ]]; then
+  echo "release executable not found: $artifact" >&2
+  exit 1
+fi
+cp "$artifact" "$dist/$product.exe"
 
-echo ">> zipping ${ZIP}"
-( cd dist && zip -r -q "$(basename "$ZIP")" "${NAME}" )
+(
+  cd "$dist"
+  zip -9 -q "$zip_name" "$product.exe"
+  sha256sum "$product.exe" "$zip_name" > SHA256SUMS
 
-echo ">> checksum"
-( cd dist && sha256sum "$(basename "$ZIP")" > "$(basename "$ZIP").sha256" )
-
-echo ">> verifying"
-( cd dist && sha256sum -c "$(basename "$ZIP").sha256" )
-unzip -l "$ZIP"
-
-echo ">> done: ${ZIP}"
+  mapfile -t expected_hash_assets < <(printf '%s\n' "$product.exe" "$zip_name" | sort)
+  mapfile -t actual_hash_assets < <(awk '{print $2}' SHA256SUMS | sort)
+  [[ "${actual_hash_assets[*]}" == "${expected_hash_assets[*]}" ]]
+  awk 'length($1) != 64 || $1 !~ /^[0-9a-f]+$/ { exit 1 } END { if (NR != 2) exit 1 }' SHA256SUMS
+  sha256sum --check --strict SHA256SUMS
+  zip -T -q "$zip_name"
+  mapfile -t entries < <(unzip -Z1 "$zip_name")
+  [[ ${#entries[@]} -eq 1 && "${entries[0]}" == "$product.exe" ]]
+)
