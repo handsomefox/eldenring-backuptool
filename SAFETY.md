@@ -5,7 +5,7 @@ anything EAC inspects, and to never put a save at risk while backing it up.
 
 ## Anti-cheat
 
-- The Steam launch option wraps the game as `"…\eldenring-backuptool.exe" --monitor %command%`.
+- The Steam launch option wraps the game as `"…\Elden Ring Backuptool.exe" --monitor %command%`.
   Steam's own command (`%command%`) is forwarded **verbatim**, so `start_protected_game.exe` and
   EAC start exactly as they would without Save Guard. Online play is unaffected.
 - Save Guard does **not** inject DLLs, hook, or read/write the game's memory.

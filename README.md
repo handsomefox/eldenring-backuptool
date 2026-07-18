@@ -41,7 +41,7 @@ Anti-Cheat. It only reads and copies your save files. See [SAFETY.md](SAFETY.md)
    launch option points at this exact path (see step 6); if you move, rename, or delete the
    folder afterward, **Elden Ring will fail to launch** until you fix it. If you do move it, just
    re-copy the launch option from the Help tab and paste the new one into Steam.
-2. Run **`eldenring-backuptool.exe`**.
+2. Run **`Elden Ring Backuptool.exe`**.
 3. On the **Dashboard**, pick the Steam account (save folder) you want to protect. If you only
    have one, it's already selected.
 4. Optionally change the backup destination on the **Settings** tab.
@@ -52,7 +52,7 @@ Anti-Cheat. It only reads and copies your save files. See [SAFETY.md](SAFETY.md)
 The launch option looks like this (your path will differ):
 
 ```
-"C:\Users\You\Desktop\eldenring-backuptool\eldenring-backuptool.exe" --monitor %command%
+"C:\Users\You\Desktop\eldenring-backuptool\Elden Ring Backuptool.exe" --monitor %command%
 ```
 
 `%command%` is Steam's own launch command — it is passed through untouched, so Easy Anti-Cheat

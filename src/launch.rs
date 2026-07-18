@@ -56,10 +56,12 @@ mod tests {
 
     #[test]
     fn launch_option_quotes_exe() {
-        let s = launch_option(Path::new(r"C:\Program Files\ERSG\eldenring-backuptool.exe"));
+        let s = launch_option(Path::new(
+            r"C:\Program Files\ERSG\Elden Ring Backuptool.exe",
+        ));
         assert_eq!(
             s,
-            r#""C:\Program Files\ERSG\eldenring-backuptool.exe" --monitor %command%"#
+            r#""C:\Program Files\ERSG\Elden Ring Backuptool.exe" --monitor %command%"#
         );
     }
 
