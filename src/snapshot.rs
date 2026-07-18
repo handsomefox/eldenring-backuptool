@@ -32,6 +32,11 @@ const IO_BUFFER_BYTES: usize = 64 * 1024;
 const TMP_PREFIX: &str = ".tmp-";
 const MAX_COPY_ATTEMPTS: u32 = 4;
 
+#[cfg(test)]
+thread_local! {
+    static ARCHIVE_HASH_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Reason {
@@ -226,7 +231,7 @@ fn hash_file(path: &Path, name: &str, limit: u64) -> Result<FileHash> {
     hash_reader(name, &mut file, limit)
 }
 
-fn load_snapshot_dir(dir: &Path, expected_steamid: Option<&str>) -> Result<Snapshot> {
+fn load_snapshot_metadata(dir: &Path, expected_steamid: Option<&str>) -> Result<Snapshot> {
     let bytes = read_limited(&dir.join(METADATA_FILE), MAX_METADATA_BYTES)?;
     let metadata: Metadata = serde_json::from_slice(&bytes)?;
     if metadata.format_version != METADATA_VERSION {
@@ -250,14 +255,25 @@ fn load_snapshot_dir(dir: &Path, expected_steamid: Option<&str>) -> Result<Snaps
     if metadata.stored_bytes > MAX_ARCHIVE_BYTES {
         bail!("snapshot archive exceeds the safety limit");
     }
-    let actual = hash_file(&archive_path, ARCHIVE_FILE, MAX_ARCHIVE_BYTES)?;
-    if actual.sha256 != metadata.archive_sha256 {
-        bail!("snapshot archive hash does not match metadata");
-    }
     Ok(Snapshot {
         dir: dir.to_path_buf(),
         metadata,
     })
+}
+
+fn verify_snapshot_archive(snapshot: Snapshot) -> Result<Snapshot> {
+    #[cfg(test)]
+    ARCHIVE_HASH_COUNT.with(|count| count.set(count.get() + 1));
+    let archive_path = snapshot.dir.join(ARCHIVE_FILE);
+    let actual = hash_file(&archive_path, ARCHIVE_FILE, MAX_ARCHIVE_BYTES)?;
+    if actual.sha256 != snapshot.metadata.archive_sha256 {
+        bail!("snapshot archive hash does not match metadata");
+    }
+    Ok(snapshot)
+}
+
+fn load_verified_snapshot(dir: &Path, expected_steamid: Option<&str>) -> Result<Snapshot> {
+    verify_snapshot_archive(load_snapshot_metadata(dir, expected_steamid)?)
 }
 
 fn is_real_directory(entry: &std::fs::DirEntry) -> bool {
@@ -281,8 +297,12 @@ fn is_real_directory(entry: &std::fs::DirEntry) -> bool {
     true
 }
 
-/// List integrity-validated snapshots for one Steam account (temp dirs and
-/// reparse points ignored), sorted oldest → newest.
+/// Structurally list snapshots for one Steam account, sorted oldest → newest.
+///
+/// Metadata is bounded and validated, and the recorded archive name, existence,
+/// and size must match. Archive payloads are deliberately not read here;
+/// callers that restore data must use [`extract`], while dedup uses [`newest`].
+/// Temp directories and reparse points are ignored.
 #[must_use]
 pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     let mut out = Vec::new();
@@ -298,7 +318,7 @@ pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
         if name.starts_with(TMP_PREFIX) {
             continue;
         }
-        if let Ok(snapshot) = load_snapshot_dir(&dir, Some(steamid)) {
+        if let Ok(snapshot) = load_snapshot_metadata(&dir, Some(steamid)) {
             out.push(snapshot);
         }
     }
@@ -306,9 +326,20 @@ pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     out
 }
 
+/// Return the newest integrity-validated snapshot for one Steam account.
+///
+/// Candidates are checked newest-first and archive hashing stops as soon as a
+/// valid snapshot is found. A corrupt newest entry therefore falls back to the
+/// next valid snapshot without requiring the complete history to be rehashed.
 #[must_use]
 pub fn newest(dest: &Path, steamid: &str) -> Option<Snapshot> {
-    list(dest, steamid).pop()
+    let mut snapshots = list(dest, steamid);
+    while let Some(snapshot) = snapshots.pop() {
+        if let Ok(snapshot) = verify_snapshot_archive(snapshot) {
+            return Some(snapshot);
+        }
+    }
+    None
 }
 
 fn system_time_to_utc(t: std::time::SystemTime) -> Option<DateTime<Utc>> {
@@ -538,15 +569,17 @@ fn verify_archive(zip_path: &Path, expected: &[FileHash]) -> Result<()> {
     Ok(())
 }
 
-/// Extract an integrity-validated snapshot into a new output directory. Unsafe
-/// names, duplicate entries, oversized content, and existing output files are
-/// rejected.
+/// Fully verify and extract a snapshot into a new output directory.
+///
+/// The complete archive hash and every ZIP entry's name, size, and content hash
+/// are checked before the restore is accepted. Unsafe names, duplicate entries,
+/// oversized content, and existing output files are rejected.
 ///
 /// # Errors
 ///
 /// Returns an error if validation, extraction, or any filesystem operation fails.
 pub fn extract(snapshot_dir: &Path, out_dir: &Path) -> Result<()> {
-    let snapshot = load_snapshot_dir(snapshot_dir, None)?;
+    let snapshot = load_verified_snapshot(snapshot_dir, None)?;
     let file = File::open(snapshot_dir.join(ARCHIVE_FILE))?;
     let mut archive = zip::ZipArchive::new(file)?;
     std::fs::create_dir_all(out_dir)?;
@@ -691,6 +724,22 @@ mod tests {
         std::fs::read(out.join(name)).unwrap()
     }
 
+    fn reset_archive_hash_count() {
+        ARCHIVE_HASH_COUNT.with(|count| count.set(0));
+    }
+
+    fn archive_hash_count() -> usize {
+        ARCHIVE_HASH_COUNT.with(std::cell::Cell::get)
+    }
+
+    fn tamper_archive_same_size(snapshot: &Snapshot) {
+        let path = snapshot.dir.join(ARCHIVE_FILE);
+        let mut bytes = std::fs::read(&path).unwrap();
+        let index = bytes.len() / 2;
+        bytes[index] ^= 0xff;
+        std::fs::write(path, bytes).unwrap();
+    }
+
     #[test]
     fn first_snapshot_with_bak() {
         let e = env();
@@ -768,6 +817,66 @@ mod tests {
     }
 
     #[test]
+    fn listing_is_structural_and_does_not_hash_archive_payloads() {
+        let e = env();
+        let src = sources(&e, false);
+        let snapshot = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        tamper_archive_same_size(&snapshot);
+
+        reset_archive_hash_count();
+        assert_eq!(list(&e.dest, "111").len(), 1);
+        assert_eq!(archive_hash_count(), 0);
+    }
+
+    #[test]
+    fn newest_hashes_only_the_first_valid_candidate() {
+        let e = env();
+        let src = sources(&e, false);
+        create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        write(&src[0], b"newer");
+        let latest = create(&e.dest, "111", &src, Reason::Periodic)
+            .unwrap()
+            .unwrap();
+
+        reset_archive_hash_count();
+        assert_eq!(newest(&e.dest, "111").unwrap().dir, latest.dir);
+        assert_eq!(archive_hash_count(), 1);
+    }
+
+    #[test]
+    fn newest_skips_a_corrupt_candidate_and_finds_an_older_valid_snapshot() {
+        let e = env();
+        let src = sources(&e, false);
+        let older = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        write(&src[0], b"newer");
+        let latest = create(&e.dest, "111", &src, Reason::Periodic)
+            .unwrap()
+            .unwrap();
+        tamper_archive_same_size(&latest);
+
+        reset_archive_hash_count();
+        assert_eq!(newest(&e.dest, "111").unwrap().dir, older.dir);
+        assert_eq!(archive_hash_count(), 2);
+    }
+
+    #[test]
+    fn extraction_rejects_same_size_archive_tampering() {
+        let e = env();
+        let src = sources(&e, false);
+        let snapshot = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        tamper_archive_same_size(&snapshot);
+        assert!(extract(&snapshot.dir, &snapshot.dir.join("out")).is_err());
+    }
+
+    #[test]
     fn source_changes_during_copy_then_stabilizes() {
         let e = env();
         let src = sources(&e, false);
@@ -839,6 +948,23 @@ mod tests {
             .expect("invalid metadata must not suppress a replacement");
         assert!(replacement.dir.join(ARCHIVE_FILE).is_file());
         assert_eq!(list(&e.dest, "111").len(), 1);
+    }
+
+    #[test]
+    fn same_size_corrupt_archive_cannot_suppress_replacement() {
+        let e = env();
+        let src = sources(&e, false);
+        let first = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        tamper_archive_same_size(&first);
+        assert!(newest(&e.dest, "111").is_none());
+
+        let replacement = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .expect("corrupt archive must not deduplicate the current save");
+        assert_ne!(replacement.dir, first.dir);
+        assert_eq!(newest(&e.dest, "111").unwrap().dir, replacement.dir);
     }
 
     #[test]

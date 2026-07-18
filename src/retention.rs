@@ -9,7 +9,9 @@ use crate::snapshot::{self, Snapshot};
 
 /// Delete oldest snapshots beyond `keep`. Returns the directories removed.
 /// Retention is applied only after a new snapshot is finalized, so a live
-/// snapshot is never deleted before its replacement exists.
+/// snapshot is never deleted before its replacement exists. Retention uses the
+/// same bounded structural listing as [`snapshot::list`] and does not hash
+/// archive payloads.
 ///
 /// # Errors
 ///
