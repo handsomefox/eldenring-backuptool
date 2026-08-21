@@ -563,9 +563,9 @@ dependencies = [
 
 [[package]]
 name = "egui"
-version = "0.36.0"
+version = "0.36.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e70d4e8e8896ba5becb0bc1c8c06d203cb44ff16a93d7a619a5e565500085d"
+checksum = "c977ac91dfaa651633fd9722e4ce9ccb32cda4c748b89a5cb57e504036e37c13"
 dependencies = [
  "accesskit",
  "ahash",
