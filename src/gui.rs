@@ -3,6 +3,7 @@
 //! launch option. Restore is intentionally manual (see README).
 
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use chrono::{DateTime, Local, Utc};
 
@@ -25,7 +26,7 @@ pub(crate) fn run() -> eframe::Result<()> {
     eframe::run_native(
         "Elden Ring Save Guard",
         options,
-        Box::new(|_cc| Ok(Box::new(App::new()))),
+        Box::new(|cc| Ok(Box::new(App::new(cc.egui_ctx.clone())))),
     )
 }
 
@@ -50,10 +51,50 @@ struct App {
     dest_edit: String,
     interval_edit: String,
     retention_edit: String,
+    ctx: egui::Context,
+    pending: Option<Receiver<LoadedView>>,
+    backup_active: bool,
+    free_space: Option<u64>,
+}
+
+struct LoadedView {
+    candidates: Vec<SaveCandidate>,
+    snapshots: Vec<Snapshot>,
+    free_space: Option<u64>,
+    status: Option<(bool, String)>,
+}
+
+fn load_view(config: &Config, root: Option<&std::path::Path>) -> LoadedView {
+    let candidates = root.map_or_else(Vec::new, discovery::discover);
+    let mut snapshots = match (&config.selected_steamid, &config.backup_dest) {
+        (Some(id), Some(dest)) => snapshot::list(dest, id),
+        _ => Vec::new(),
+    };
+    snapshots.reverse();
+    LoadedView {
+        candidates,
+        snapshots,
+        free_space: config.backup_dest.as_deref().and_then(platform::free_space),
+        status: None,
+    }
+}
+
+fn spawn_job<T: Send + 'static>(
+    ctx: egui::Context,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> std::io::Result<Receiver<T>> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("save-guard-worker".into())
+        .spawn(move || {
+            let _ = sender.send(work());
+            ctx.request_repaint();
+        })?;
+    Ok(receiver)
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(ctx: egui::Context) -> Self {
         let config_path = paths::config_path().ok();
         let (config, recovered) = match &config_path {
             Some(p) => {
@@ -79,28 +120,60 @@ impl App {
             tab: Tab::Dashboard,
             status: None,
             recovered,
+            ctx,
+            pending: None,
+            backup_active: false,
+            free_space: None,
         };
         app.refresh();
         app
     }
 
     fn refresh(&mut self) {
-        self.candidates = match &self.elden_root {
-            Some(root) => discovery::discover(root),
-            None => Vec::new(),
-        };
-        self.reload_snapshots();
+        let config = self.config.clone();
+        let root = self.elden_root.clone();
+        self.start_job(false, move || load_view(&config, root.as_deref()));
     }
 
     fn reload_snapshots(&mut self) {
-        self.snapshots = match (&self.config.selected_steamid, &self.config.backup_dest) {
-            (Some(steamid), Some(dest)) => {
-                let mut s = snapshot::list(dest, steamid);
-                s.reverse(); // newest first for display
-                s
+        self.refresh();
+    }
+
+    fn start_job(&mut self, backup: bool, work: impl FnOnce() -> LoadedView + Send + 'static) {
+        if self.pending.is_some() {
+            return;
+        }
+        match spawn_job(self.ctx.clone(), work) {
+            Ok(receiver) => {
+                self.pending = Some(receiver);
+                self.backup_active = backup;
             }
-            _ => Vec::new(),
+            Err(error) => {
+                self.status = Some((true, format!("Could not start background work: {error}")));
+            }
+        }
+    }
+
+    fn poll_job(&mut self) {
+        let Some(receiver) = &self.pending else {
+            return;
         };
+        match receiver.try_recv() {
+            Ok(view) => {
+                self.candidates = view.candidates;
+                self.snapshots = view.snapshots;
+                self.free_space = view.free_space;
+                if view.status.is_some() {
+                    self.status = view.status;
+                }
+            }
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                self.status = Some((true, "Background work stopped unexpectedly.".into()));
+            }
+        }
+        self.pending = None;
+        self.backup_active = false;
     }
 
     fn selected_candidate(&self) -> Option<&SaveCandidate> {
@@ -137,6 +210,9 @@ impl App {
     }
 
     fn backup_now(&mut self) {
+        if self.pending.is_some() {
+            return;
+        }
         let Some(candidate) = self.selected_candidate().cloned() else {
             self.status = Some((true, "Select a Steam account first.".into()));
             return;
@@ -145,23 +221,27 @@ impl App {
             self.status = Some((true, "Choose a backup destination first.".into()));
             return;
         };
-        if let Err(e) = paths::validate_backup_dest(&candidate.dir, &dest) {
-            self.status = Some((true, e.to_string()));
-            return;
-        }
-        let sources = source_files(&candidate);
-        match snapshot::create(&dest, &candidate.steamid, &sources, Reason::Manual) {
-            Ok(Some(snap)) => {
-                let _ =
-                    save_guard::retention::apply(&dest, &candidate.steamid, self.config.retention);
-                self.status = Some((false, format!("Backed up: {}", dir_name(&snap.dir))));
-            }
-            Ok(None) => {
-                self.status = Some((false, "Save unchanged — no new backup needed.".into()));
-            }
-            Err(e) => self.status = Some((true, format!("Backup failed: {e}"))),
-        }
-        self.reload_snapshots();
+        let config = self.config.clone();
+        let root = self.elden_root.clone();
+        self.start_job(true, move || {
+            let result = (|| -> anyhow::Result<String> {
+                paths::validate_backup_dest(&candidate.dir, &dest)?;
+                let sources = source_files(&candidate);
+                match snapshot::create(&dest, &candidate.steamid, &sources, Reason::Manual)? {
+                    Some(snap) => {
+                        save_guard::retention::apply(&dest, &candidate.steamid, config.retention)?;
+                        Ok(format!("Backed up: {}", dir_name(&snap.dir)))
+                    }
+                    None => Ok("Save unchanged. No new backup needed.".into()),
+                }
+            })();
+            let mut view = load_view(&config, root.as_deref());
+            view.status = Some(match result {
+                Ok(message) => (false, message),
+                Err(error) => (true, format!("Backup failed: {error}")),
+            });
+            view
+        });
     }
 
     fn apply_settings(&mut self) {
@@ -209,6 +289,15 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_job();
+        if self.backup_active && ui.ctx().input(|input| input.viewport().close_requested()) {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.status = Some((
+                false,
+                "Wait for the backup to finish before closing.".into(),
+            ));
+        }
         egui::Panel::top("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("🛡 Elden Ring Save Guard");
@@ -218,7 +307,10 @@ impl eframe::App for App {
                 ui.selectable_value(&mut self.tab, Tab::Settings, "Settings");
                 ui.selectable_value(&mut self.tab, Tab::Help, "Help");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("⟳ Refresh").clicked() {
+                    if ui
+                        .add_enabled(self.pending.is_none(), egui::Button::new("⟳ Refresh"))
+                        .clicked()
+                    {
                         self.refresh();
                     }
                 });
@@ -240,11 +332,23 @@ impl eframe::App for App {
             });
         }
 
-        egui::CentralPanel::default().show(ui, |ui| match self.tab {
-            Tab::Dashboard => self.dashboard(ui),
-            Tab::Backups => self.backups(ui),
-            Tab::Settings => self.settings(ui),
-            Tab::Help => self.help(ui),
+        egui::CentralPanel::default().show(ui, |ui| {
+            if self.pending.is_some() {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(if self.backup_active {
+                        "Creating backup…"
+                    } else {
+                        "Loading saves and backups…"
+                    });
+                });
+            }
+            ui.add_enabled_ui(self.pending.is_none(), |ui| match self.tab {
+                Tab::Dashboard => self.dashboard(ui),
+                Tab::Backups => self.backups(ui),
+                Tab::Settings => self.settings(ui),
+                Tab::Help => self.help(ui),
+            });
         });
     }
 }
@@ -341,9 +445,7 @@ impl App {
                 );
                 ui.end_row();
 
-                if let Some(dest) = &self.config.backup_dest
-                    && let Some(free) = platform::free_space(dest)
-                {
+                if let Some(free) = self.free_space {
                     ui.label("Free space:");
                     ui.label(human_size(free));
                     ui.end_row();
@@ -598,5 +700,26 @@ fn relative_age(t: DateTime<Utc>) -> String {
         format!("{}h ago", secs / 3600)
     } else {
         format!("{}d ago", secs / 86_400)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn background_job_does_not_block_the_caller() {
+        let (release, wait) = mpsc::channel();
+        let job = spawn_job(egui::Context::default(), move || {
+            wait.recv().unwrap();
+            42
+        })
+        .unwrap();
+        assert!(matches!(job.try_recv(), Err(TryRecvError::Empty)));
+        release.send(()).unwrap();
+        assert_eq!(
+            job.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+            42
+        );
     }
 }
