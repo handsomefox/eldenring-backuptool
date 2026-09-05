@@ -1,145 +1,122 @@
 # Elden Ring Save Guard
 
-Automatic, versioned backups of your **vanilla Elden Ring** save — created quietly in the
-background every time you play, so you always have a known-good save to fall back on.
+Save Guard keeps automatic, versioned backups of your vanilla Elden Ring save. It runs in the background every time you play, so there is always a known-good save to fall back on.
 
-## What this program does
+If your save is already ruined and you need it back now, go to [restore a save](#restore-a-save).
 
-Every time you launch Elden Ring through Steam, Save Guard makes a verified copy of your save
-before you play, again whenever the save changes while you play, and once more after you quit.
-Each copy is a separate, timestamped snapshot kept on your own PC. If your save is ever ruined,
-you can copy an older snapshot back.
+## What it does
+
+You launch Elden Ring through Steam as usual. Save Guard copies your save before you play, again whenever the save changes during the session, and once more after you quit. It verifies each copy against the original bytes. Every copy is a separate, timestamped snapshot on your own PC.
 
 ## Why it exists
 
-- **Malicious multiplayer users** have been reported altering or ruining other players' saves —
-  forcing boss deaths, pushing story progression, triggering cutscenes, teleporting characters,
-  unlocking achievements, or leaving world state broken.
-- **Ordinary problems** — crashes, power loss, disk errors — can corrupt or truncate a save too.
-- **Steam Cloud is synchronization, not backup history.** If your save is damaged, the damaged
-  version can simply become the newest copy that syncs everywhere. There is no built-in "go back
-  a few versions" button.
+Players have reported malicious multiplayer users altering other players' saves: forcing boss deaths, pushing story progression, firing cutscenes, teleporting characters, unlocking achievements, and leaving world state broken. Ordinary failures ruin saves too. A crash, a power cut, or a bad sector can truncate one.
 
-Save Guard **cannot stop an attack or corruption from happening during a session** — nothing on
-your PC can. What it does is keep a history of good saves so you can recover afterward.
+Steam Cloud does not cover this, because it synchronizes rather than keeping history. If your save is damaged, the damaged version becomes the newest copy and syncs everywhere. There is no button to go back a few versions.
 
-## Supported
+Save Guard cannot stop an attack or a corruption while it is happening. Nothing running on your PC can. What it gives you is a history of good saves, so you can recover afterward.
 
-- Windows 10 and Windows 11
-- The **Steam** version of Elden Ring
-- **Vanilla** saves (`ER0000.sl2` and its `.sl2.bak`)
-- **Not** supported in this release: Seamless Co-op `.co2` saves
-- **No administrator rights required**
+## What is supported
 
-It does **not** modify the game, inject code, read game memory, or interfere with Easy
-Anti-Cheat. It only reads and copies your save files. See [SAFETY.md](SAFETY.md).
+- Windows 10 and Windows 11.
+- The Steam version of Elden Ring.
+- Vanilla saves: `ER0000.sl2` and its `ER0000.sl2.bak`.
+- No administrator rights needed.
+
+Seamless Co-op `.co2` saves are not handled in this release.
+
+Save Guard does not modify the game, inject code, read game memory, or interfere with Easy Anti-Cheat. It reads and copies your save files, and nothing else. For the details, see [SAFETY.md](SAFETY.md).
 
 ## Install
 
-1. Download the latest release ZIP and extract it to a **permanent location** you won't move
-   later — e.g. `C:\Tools\EldenRingSaveGuard\`, not your Downloads or a temp folder. The Steam
-   launch option points at this exact path (see step 6); if you move, rename, or delete the
-   folder afterward, **Elden Ring will fail to launch** until you fix it. If you do move it, just
-   re-copy the launch option from the Help tab and paste the new one into Steam.
-2. Run **`Elden Ring Backuptool.exe`**.
-3. On the **Dashboard**, pick the Steam account (save folder) you want to protect. If you only
-   have one, it's already selected.
-4. Optionally change the backup destination on the **Settings** tab.
-5. Open the **Help** tab and click **Copy launch option**.
-6. In Steam: **Elden Ring → Properties → General → Launch Options**, and paste it there.
-7. Launch Elden Ring normally. Backups now happen automatically.
+1. Download the latest release ZIP and extract it to a folder you will not move later, such as `C:\Tools\EldenRingSaveGuard\`. Do not leave it in Downloads or a temp folder. Step 6 points a Steam launch option at this exact path, so if you move, rename, or delete the folder afterward, Elden Ring will not launch until you fix it. If you do move it, copy the launch option from the Help tab again and paste the new one into Steam.
+2. Run `Elden Ring Backuptool.exe`.
+3. On the Dashboard tab, pick the Steam account whose save you want to protect. If you have only one, it is already selected.
+4. If you want the backups somewhere other than the default, change the destination on the Settings tab.
+5. Open the Help tab and click **Copy launch option**.
+6. In Steam, open **Elden Ring > Properties > General > Launch Options** and paste it there.
+7. Launch Elden Ring normally. Backups now happen on their own.
 
-The launch option looks like this (your path will differ):
+The launch option looks like this, with your own path:
 
 ```
 "C:\Users\You\Desktop\eldenring-backuptool\Elden Ring Backuptool.exe" --monitor %command%
 ```
 
-`%command%` is Steam's own launch command — it is passed through untouched, so Easy Anti-Cheat
-and online play work exactly as before.
+`%command%` is Steam's own launch command. Save Guard passes it through untouched, so Easy Anti-Cheat and online play work exactly as they did before.
 
-## Confirming it works
+## Confirm it works
 
-On the **Dashboard** you'll see the selected account, the save file and its size, the backup
-destination, how many snapshots are stored, and when the last backup happened. After you play a
-session (or press **Back up now**), the status turns to **Protected — backups exist**.
+The Dashboard shows the selected account, the save file and its size, the backup destination, how many snapshots are stored, and when the last backup ran. Play a session, or click **Back up now**, and the status changes to "Protected — backups exist".
 
 ## Multiple Steam accounts
 
-`%APPDATA%\EldenRing` can contain several numbered folders (multiple Steam accounts, Family
-Sharing, old copies, another person on the same PC). Save Guard lists the ones that actually
-contain a save and lets you choose which to protect. It does **not** blindly back up every
-folder, and it does **not** guess based only on which was modified most recently. Switching the
-selected account never merges or deletes another account's snapshots.
+`%APPDATA%\EldenRing` can hold several numbered folders. Multiple Steam accounts, Family Sharing, old copies, and another person on the same PC all produce one. Save Guard lists the folders that actually contain a save and lets you choose. It does not back up every folder it finds, and it does not guess from modification time alone. Switching the selected account never merges or deletes another account's snapshots.
 
-## Restoring a save (manual)
+## Restore a save
 
-Restore is done by hand, so you stay in full control:
+Restoring is a manual step, so that nothing overwrites a live save behind your back.
 
-1. **Fully close Elden Ring**, and preferably **exit Steam completely**.
-2. In the app, open the **Backups** tab, choose a snapshot, and click **Open** to reveal its
-   folder in Explorer.
-3. Double-click **`save.zip`** (Windows opens it like a folder) and copy the `.sl2` file (and
-   `.sl2.bak` if present) into your save folder (`%APPDATA%\EldenRing\<your-id>\`), replacing the
-   current files.
-4. Reopen Steam. **If Steam Cloud reports a conflict, choose the LOCAL copy** — the one you just
-   restored — rather than the newer cloud version. (The exact wording of the conflict prompt
-   varies between Steam versions; pick the option that keeps your **local** files.)
+1. Close Elden Ring completely, and exit Steam as well.
+2. In the app, open the Backups tab, choose a snapshot, and click **Open** to reveal its folder in Explorer.
+3. Double-click `save.zip`. Windows opens it like a folder. Copy the `.sl2` file, and the `.sl2.bak` file if there is one, into `%APPDATA%\EldenRing\<your-id>\`, replacing what is there.
+4. Start Steam again. If Steam Cloud reports a conflict, choose the local copy, which is the one you just restored, rather than the newer cloud version. The wording of that prompt changes between Steam versions, so pick whichever option keeps your local files.
 
-## Backup location
+## Where backups go
 
-Default: `Documents\Game Save Backups\Elden Ring\<SteamID64>\snapshots\`. You can change it on
-the **Settings** tab. Each snapshot folder is named by date and time and contains `save.zip` (the
-compressed save files — Elden Ring saves are mostly empty space and shrink roughly 15–20×) plus a
-   small `metadata.json` with hashes for both the original saves and the complete archive. Existing
-   snapshots are rechecked before they are displayed, used for deduplication, or pruned.
+The default destination is `Documents\Game Save Backups\Elden Ring\<SteamID64>\snapshots\`, and you can change it on the Settings tab.
 
-## Uninstalling
+Each snapshot folder is named for its UTC timestamp and a short content hash. It holds `save.zip` with the compressed save files, plus a small `metadata.json` recording hashes of both the original saves and the finished archive. Elden Ring saves are mostly empty space and compress well: the 27.6 MiB example save in `example-save/` shrinks about 18 times. Save Guard re-checks an existing snapshot before it displays it, compares it for deduplication, or prunes it.
 
-1. In Steam, open **Elden Ring → Properties → General → Launch Options** and **clear the field**
-   first. (If you delete the app before clearing this, Steam will try to run a missing file and
-   the game won't launch.)
+## Uninstall
+
+1. In Steam, open **Elden Ring > Properties > General > Launch Options** and clear the field. Do this first. If you delete the app while the launch option still points at it, Steam tries to run a missing file and the game will not start.
 2. Delete the extracted application folder.
-3. Your backups are kept. To remove them, delete the backup destination folder yourself.
-4. Optional: delete `%LOCALAPPDATA%\EldenRingSaveGuard\` to remove settings and logs.
+3. Your backups stay where they are. To remove them, delete the backup destination folder yourself.
+4. To remove settings and logs as well, delete `%LOCALAPPDATA%\EldenRingSaveGuard\`.
 
 ## Limitations
 
-- It does **not** prevent cheating or corruption — it gives you recovery points.
-- It **cannot** undo Steam achievements that have already synced to your account.
-- Only the **one** account (SteamID64) you selected is backed up.
-- Vanilla only; Seamless Co-op `.co2` saves are not handled.
-- Backups use local disk space — keep an eye on free space for large snapshot counts.
-- A snapshot taken **after** a malicious change will itself contain that change, so keep older
-  snapshots around; don't rely only on the newest one.
-- The background monitor reports exit code 0 for the game session (it detects the game by process
-  name and can't recover the game's real exit code). This does not affect Steam or the game.
+- Save Guard does not prevent cheating or corruption. It gives you recovery points.
+- It cannot undo Steam achievements that have already synced to your account.
+- It backs up the one account, by SteamID64, that you selected.
+- It handles vanilla saves only, not Seamless Co-op `.co2` saves.
+- Snapshots use local disk space, so watch your free space if you keep many.
+- A snapshot taken after a malicious change contains that change. Keep older snapshots, and do not rely on the newest one alone.
+- The background monitor always reports exit code 0 for the game session. It detects the game by process name and cannot read the game's real exit code. Steam and the game are unaffected.
 
 ## Development
 
-Requires Rust 1.97.1 (edition 2024, pinned in CI). This repo cross-builds Windows binaries from Linux with
-[`cargo-xwin`](https://github.com/rust-cross/cargo-xwin); on Windows you can use the normal
-MSVC target.
+The toolchain is pinned to Rust 1.97.1 in `rust-toolchain.toml`, and the package uses edition 2024. This repo cross-builds Windows binaries from Linux with [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin). On Windows, use the normal MSVC target.
+
+CI runs these three commands on Ubuntu and Windows, plus a native release build on Windows and `cargo audit`:
 
 ```sh
-# Portable core: builds and tests on any OS, no GUI/X11 needed
-cargo test --lib --no-default-features
-cargo clippy --lib --no-default-features -- -D warnings
-cargo fmt --check
-
-# Full Windows build (from Linux)
-cargo xwin build --release --target x86_64-pc-windows-msvc
-# ...or on Windows
-cargo build --release
+cargo fmt --all -- --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Project layout (single package, two targets):
+The GUI sits behind the default `gui` feature. To build and test the portable core without pulling in eframe, egui, and X11:
 
-- `src/lib.rs` — portable core (`config`, `discovery`, `snapshot`, `retention`, `launch`,
-  `paths`, `monitor`, `platform`, `logging`). Contains all the unit tests.
-- `src/main.rs` — dispatches GUI vs `--monitor`.
-- `src/gui.rs` — the egui dashboard (behind the `gui` feature so core tests stay GUI-free).
+```sh
+cargo test --lib --no-default-features
+cargo clippy --lib --no-default-features -- -D warnings
+```
+
+To build the Windows app:
+
+```sh
+cargo xwin build --release --target x86_64-pc-windows-msvc   # from Linux
+cargo build --release                                        # on Windows
+```
+
+The package has one library and one binary:
+
+- `src/lib.rs` is the portable core (`config`, `discovery`, `snapshot`, `retention`, `launch`, `paths`, `monitor`, `platform`, `logging`) and holds the unit tests.
+- `src/main.rs` dispatches between the GUI and `--monitor`.
+- `src/gui.rs` is the egui dashboard, behind the `gui` feature so the core tests stay GUI-free.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
