@@ -56,6 +56,12 @@ jobs:
         run: cargo test --workspace --no-fail-fast --locked
       - name: Lint complete workspace
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The portable core must stay buildable without eframe, egui, and X11, so
+      # the gui feature cannot leak into it unnoticed.
+      - name: Test the core without the gui feature
+        run: cargo test --lib --no-default-features --locked
+      - name: Lint the core without the gui feature
+        run: cargo clippy --lib --no-default-features --locked -- -D warnings
       - name: Detect unused dependencies
         uses: bnjbvr/cargo-machete@ac30a525c0a8d163a92d727b3ff079ee3f6ecb08 # v0.9.2
 
