@@ -96,9 +96,45 @@ pub fn free_space(_path: &std::path::Path) -> Option<u64> {
 use std::os::windows::ffi::OsStrExt;
 
 /// Open a folder in the system file manager (Explorer on Windows). Best-effort.
+///
+/// On Windows this asks the shell rather than spawning `explorer.exe`.
+/// Explorer hands the path to the running shell and exits, so the launch can
+/// fail after `spawn` has already reported success and nothing ever opens.
 pub fn open_folder(path: &std::path::Path) {
     #[cfg(windows)]
-    let _ = std::process::Command::new("explorer").arg(path).spawn();
+    {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        /// Values at or below this mean `ShellExecuteW` failed. Above it, the
+        /// return value is a legacy instance handle.
+        const SHELL_EXECUTE_MIN_SUCCESS: usize = 32;
+
+        let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+        if wide.contains(&0) {
+            return;
+        }
+        wide.push(0);
+        let verb: Vec<u16> = "open\0".encode_utf16().collect();
+
+        // SAFETY: both strings are NUL-terminated and live for the duration of
+        // this synchronous call, and every other argument is the documented
+        // null. The caller is the egui window thread, where winit has already
+        // initialized COM for the shell extensions Explorer loads.
+        let instance = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                wide.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if (instance as usize) <= SHELL_EXECUTE_MIN_SUCCESS {
+            tracing::warn!(code = instance as usize, "failed to open the folder");
+        }
+    }
     #[cfg(not(windows))]
     let _ = std::process::Command::new("xdg-open").arg(path).spawn();
 }
