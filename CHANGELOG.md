@@ -2,7 +2,7 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
-## Unreleased
+## 1.0.7
 
 - Upgrading from 1.0.6 or earlier breaks the Steam launch option until you copy it again. The
   executable is now `eldenring-backuptool.exe`, not `Elden Ring Backuptool.exe`, and the launch
