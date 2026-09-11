@@ -35,3 +35,13 @@ Deduplication compares content hashes, never modification times.
 Unit tests live in `src/lib.rs` beside the code they cover. Use `tempfile` for filesystem scenarios, and cover the rejection path: a truncated source, a mid-copy change, a path guard violation, and a corrupted existing archive.
 
 CI cannot reach the Steam launch option, the background monitor across a real game session, or a manual restore. Exercise those three by hand on Windows.
+
+## Bump CI tool pins by hand
+
+`scripts/install-ci-tool.sh` downloads cargo-audit, cargo-machete, actionlint, and zizmor from their release pages and checks each archive against a pinned SHA-256 before it extracts anything. Dependabot cannot bump these pins. To bump one, change its row in the script and take the new hash from the digest GitHub records for the asset:
+
+```sh
+gh release view <tag> -R <owner>/<repo> --json assets --jq '.assets[] | select(.name == "<asset>") | .digest'
+```
+
+CI runs actionlint, shellcheck, and `zizmor --persona pedantic` on every push. Run all three before you push a workflow change.
