@@ -29,8 +29,8 @@ Save Guard does not modify the game, inject code, read game memory, or interfere
 
 ## Install
 
-1. Download the latest release ZIP and extract it to a folder you will not move later, such as `C:\Tools\EldenRingSaveGuard\`. Do not leave it in Downloads or a temp folder. Step 6 points a Steam launch option at this exact path, so if you move, rename, or delete the folder afterward, Elden Ring will not launch until you fix it. If you do move it, copy the launch option from the Help tab again and paste the new one into Steam.
-2. Run `Elden Ring Backuptool.exe`.
+1. Download the latest release ZIP. It holds one folder with `eldenring-backuptool.exe` in it. Put `eldenring-backuptool.exe` in a folder you will not move later, such as `C:\Tools\EldenRingSaveGuard\`. Do not leave it in Downloads or a temp folder. Step 6 points a Steam launch option at this exact path, so if you move, rename, or delete the file afterward, Elden Ring will not launch until you fix it. If you do move it, copy the launch option from the Help tab again and paste the new one into Steam.
+2. Run `eldenring-backuptool.exe`.
 3. On the Dashboard tab, pick the Steam account whose save you want to protect. If you have only one, it is already selected.
 4. If you want the backups somewhere other than the default, change the destination on the Settings tab.
 5. Open the Help tab and click **Copy launch option**.
@@ -40,10 +40,14 @@ Save Guard does not modify the game, inject code, read game memory, or interfere
 The launch option looks like this, with your own path:
 
 ```
-"C:\Users\You\Desktop\eldenring-backuptool\Elden Ring Backuptool.exe" --monitor %command%
+"C:\Tools\EldenRingSaveGuard\eldenring-backuptool.exe" --monitor %command%
 ```
 
 `%command%` is Steam's own launch command. Save Guard passes it through untouched, so Easy Anti-Cheat and online play work exactly as they did before.
+
+To upgrade, replace `eldenring-backuptool.exe` in that folder with the one from the new release. The launch option keeps working, because the path stays the same.
+
+Versions 1.0.6 and earlier were called `Elden Ring Backuptool.exe`. If you upgrade from one of them, put `eldenring-backuptool.exe` where the old file was, then copy the launch option from the Help tab and paste it into Steam again. Until you do, Elden Ring does not start from Steam.
 
 ## Confirm it works
 
@@ -110,6 +114,14 @@ To build the Windows app:
 cargo xwin build --release --target x86_64-pc-windows-msvc   # from Linux
 cargo build --release                                        # on Windows
 ```
+
+To pack the same archive and `SHA256SUMS` a release publishes, under `dist/`:
+
+```sh
+bash scripts/package-windows.sh
+```
+
+The packaging script needs `cargo-xwin` 0.23.1, `jq`, `zip`, `unzip`, and GNU `sha256sum`. It checks the archive contents and the checksums before it reports success.
 
 The package has one library and one binary:
 

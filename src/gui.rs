@@ -616,7 +616,7 @@ impl App {
         ui.add_space(4.0);
 
         let exe =
-            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("Elden Ring Backuptool.exe"));
+            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("eldenring-backuptool.exe"));
         let mut cmd = launch::launch_option(&exe);
         ui.horizontal(|ui| {
             ui.add(
