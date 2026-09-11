@@ -89,7 +89,7 @@ Each snapshot folder is named for its UTC timestamp and a short content hash. It
 
 The toolchain is pinned to Rust 1.97.1 in `rust-toolchain.toml`, and the package uses edition 2024. This repo cross-builds Windows binaries from Linux with [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin). On Windows, use the normal MSVC target.
 
-CI runs these three commands on Ubuntu and Windows, plus a native release build on Windows and `cargo audit`:
+CI runs these three commands on Ubuntu and the last two on Windows, along with `cargo audit` and `cargo machete`:
 
 ```sh
 cargo fmt --all -- --check
