@@ -2,6 +2,11 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.1.0
+
+- Update egui and eframe to 0.36.2.
+- Build with Rust 1.98.1.
+
 ## 1.0.7
 
 - Upgrading from 1.0.6 or earlier breaks the Steam launch option until you copy it again. The
