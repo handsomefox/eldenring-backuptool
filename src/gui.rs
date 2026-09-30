@@ -402,7 +402,9 @@ impl App {
             (egui::Color32::from_rgb(200, 140, 60), "Setup incomplete")
         };
         ui.horizontal(|ui| {
-            ui.colored_label(color, "●");
+            // Painted rather than typed: egui's default fonts have no "●".
+            let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+            ui.painter().circle_filled(dot.center(), 4.5, color);
             ui.strong(text);
             if platform::process_running(save_guard::GAME_PROCESS) {
                 ui.separator();
@@ -612,7 +614,7 @@ impl App {
 
     fn help(&mut self, ui: &mut egui::Ui) {
         ui.strong("Steam launch option");
-        ui.label("Copy the command below into Steam → Elden Ring → Properties → General → Launch Options. This makes backups happen automatically every time you play, even with this window closed.");
+        ui.label("Copy the command below into Steam > Elden Ring > Properties > General > Launch Options. This makes backups happen automatically every time you play, even with this window closed.");
         ui.add_space(4.0);
 
         let exe =
