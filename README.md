@@ -1,5 +1,8 @@
 # Elden Ring Save Guard
 
+[![CI](https://github.com/handsomefox/eldenring-backuptool/actions/workflows/ci.yml/badge.svg)](https://github.com/handsomefox/eldenring-backuptool/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Save Guard keeps automatic, versioned backups of your vanilla Elden Ring save. It runs in the background every time you play, so there is always a known-good save to fall back on.
 
 If your save is already ruined and you need it back now, go to [restore a save](#restore-a-save).
@@ -31,7 +34,7 @@ Save Guard does not modify the game, inject code, read game memory, or interfere
 
 1. Download the latest release ZIP. It holds one folder with `eldenring-backuptool.exe` in it. Put `eldenring-backuptool.exe` in a folder you will not move later, such as `C:\Tools\EldenRingSaveGuard\`. Do not leave it in Downloads or a temp folder. Step 6 points a Steam launch option at this exact path, so if you move, rename, or delete the file afterward, Elden Ring will not launch until you fix it. If you do move it, copy the launch option from the Help tab again and paste the new one into Steam.
 2. Run `eldenring-backuptool.exe`.
-3. On the Dashboard tab, pick the Steam account whose save you want to protect. If you have only one, it is already selected.
+3. On the Dashboard tab, under **Steam accounts with saves**, pick the account whose save you want to protect. Pick it even if it is the only one listed.
 4. If you want the backups somewhere other than the default, change the destination on the Settings tab.
 5. Open the Help tab and click **Copy launch option**.
 6. In Steam, open **Elden Ring > Properties > General > Launch Options** and paste it there.
