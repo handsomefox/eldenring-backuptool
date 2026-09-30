@@ -56,6 +56,8 @@ Versions 1.0.6 and earlier were called `Elden Ring Backuptool.exe`. If you upgra
 
 The Dashboard shows the selected account, the save file and its size, the backup destination, how many snapshots are stored, and when the last backup ran. Play a session, or click **Back up now**, and the status changes to "Protected — backups exist".
 
+![The Dashboard tab, protecting one account with four snapshots stored](docs/dashboard.png)
+
 ## Multiple Steam accounts
 
 `%APPDATA%\EldenRing` can hold several numbered folders. Multiple Steam accounts, Family Sharing, old copies, and another person on the same PC all produce one. Save Guard lists the folders that actually contain a save and lets you choose. It does not back up every folder it finds, and it does not guess from modification time alone. Switching the selected account never merges or deletes another account's snapshots.
@@ -66,6 +68,9 @@ Restoring is a manual step, so that nothing overwrites a live save behind your b
 
 1. Close Elden Ring completely, and exit Steam as well.
 2. In the app, open the Backups tab, choose a snapshot, and click **Open** to reveal its folder in Explorer.
+
+   ![The Backups tab, listing four snapshots newest first, each with an Open button](docs/backups.png)
+
 3. Double-click `save.zip`. Windows opens it like a folder. Copy the `.sl2` file, and the `.sl2.bak` file if there is one, into `%APPDATA%\EldenRing\<your-id>\`, replacing what is there.
 4. Start Steam again. If Steam Cloud reports a conflict, choose the local copy, which is the one you just restored, rather than the newer cloud version. The wording of that prompt changes between Steam versions, so pick whichever option keeps your local files.
 
@@ -131,6 +136,18 @@ The package has one library and one binary:
 - `src/lib.rs` is the portable core (`config`, `discovery`, `snapshot`, `retention`, `launch`, `paths`, `monitor`, `platform`, `logging`) and holds the unit tests.
 - `src/main.rs` dispatches between the GUI and `--monitor`.
 - `src/gui.rs` is the egui dashboard, behind the `gui` feature so the core tests stay GUI-free.
+
+The pictures above come from a Linux build run against `example-save/` in a scratch folder, not against anyone's own save. That is why their paths are Linux paths. To run the same setup:
+
+```sh
+demo=/tmp/demo
+mkdir -p "$demo/AppData/Roaming/EldenRing/76561190000000001" "$demo/AppData/Local" "$demo/.config" "$demo/Documents"
+cp example-save/ER0000.sl2 example-save/ER0000.sl2.bak "$demo/AppData/Roaming/EldenRing/76561190000000001/"
+echo "XDG_DOCUMENTS_DIR=\"$demo/Documents\"" > "$demo/.config/user-dirs.dirs"
+APPDATA="$demo/AppData/Roaming" LOCALAPPDATA="$demo/AppData/Local" XDG_CONFIG_HOME="$demo/.config" cargo run --release
+```
+
+`76561190000000001` is an invented SteamID64. Backups from this run go to `/tmp/demo/Documents`.
 
 ## License
 
