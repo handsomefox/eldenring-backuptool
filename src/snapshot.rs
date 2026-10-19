@@ -550,7 +550,7 @@ fn verify_archive(zip_path: &Path, expected: &[FileHash]) -> Result<()> {
     let mut total = 0u64;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.to_string();
         if entry.is_dir() || name.contains(['/', '\\']) || !seen.insert(name.clone()) {
             bail!("unsafe or duplicate archive entry: {name}");
         }
@@ -590,7 +590,7 @@ pub fn extract(snapshot_dir: &Path, out_dir: &Path) -> Result<()> {
     let mut total = 0u64;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.to_string();
         if entry.is_dir()
             || name.contains(['/', '\\'])
             || Path::new(&name).file_name().and_then(|n| n.to_str()) != Some(name.as_str())
