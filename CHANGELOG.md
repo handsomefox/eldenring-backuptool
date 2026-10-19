@@ -2,6 +2,11 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.1.1
+
+- Fix the Dashboard status dot and the Steam menu path on the Help tab, which showed as empty boxes.
+- Update zip to 9.0.5, which fixes RustSec security advisories.
+
 ## 1.1.0
 
 - Update egui and eframe to 0.36.2.
