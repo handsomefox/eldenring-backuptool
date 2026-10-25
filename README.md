@@ -48,9 +48,17 @@ The launch option looks like this, with your own path:
 
 `%command%` is Steam's own launch command. Save Guard passes it through untouched, so Easy Anti-Cheat and online play work exactly as they did before.
 
-To upgrade, replace `eldenring-backuptool.exe` in that folder with the one from the new release. The launch option keeps working, because the path stays the same.
+To upgrade by hand, replace `eldenring-backuptool.exe` in that folder with the one from the new release. The launch option keeps working, because the path stays the same. Save Guard can also do this for you; see [Updates](#updates).
 
 Versions 1.0.6 and earlier were called `Elden Ring Backuptool.exe`. If you upgrade from one of them, put `eldenring-backuptool.exe` where the old file was, then copy the launch option from the Help tab and paste it into Steam again. Until you do, Elden Ring does not start from Steam.
+
+## Updates
+
+The Save Guard window checks this repository's GitHub releases for a new version once a day. To check more or less often, or never, open the Help tab and click **App updates…**. A check is one request to the GitHub API, and it sends nothing about you or your saves. The background monitor that Steam starts never checks for updates and never contacts GitHub.
+
+When a new version is out, a button in the header names it. Click it to read the notes of every release since yours, then choose **Download update**, **Skip this version**, or **Not now**. The download must match both the release's `SHA256SUMS` and the SHA-256 that GitHub records for the file. **Restart to update** moves the new `eldenring-backuptool.exe` into the same path and reopens the window, so the Steam launch option keeps working. The replaced executable stays beside it as `eldenring-backuptool.exe.old` until a later start. If the monitor is still running from it during a game, the file stays until the game exits.
+
+The install needs write access to the folder that holds `eldenring-backuptool.exe`. If Save Guard lives somewhere it cannot write, download the new release by hand instead.
 
 ## Confirm it works
 

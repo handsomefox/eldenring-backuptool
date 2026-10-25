@@ -9,6 +9,7 @@ One library and one binary, split so the core stays testable without a GUI:
 - `src/lib.rs` is the portable core: `config`, `discovery`, `snapshot`, `retention`, `launch`, `paths`, `monitor`, `platform`, and `logging`. The unit tests live here.
 - `src/gui.rs` is the egui dashboard, behind the default `gui` feature.
 - `src/main.rs` dispatches between the GUI and `--monitor`.
+- `src/update.rs` updates the app itself from its GitHub releases. It is byte-for-byte the same file as `crates/app-update/src/lib.rs` in the other four apps, so change it in every app at once. Only the dashboard creates an updater; `--monitor` never contacts GitHub.
 
 Put new logic in the core rather than in `gui.rs`, so it can be tested on Linux. A function that reaches for egui types is in the wrong file.
 
@@ -34,7 +35,7 @@ Deduplication compares content hashes, never modification times.
 
 Unit tests live in `src/lib.rs` beside the code they cover. Use `tempfile` for filesystem scenarios, and cover the rejection path: a truncated source, a mid-copy change, a path guard violation, and a corrupted existing archive.
 
-CI cannot reach the Steam launch option, the background monitor across a real game session, or a manual restore. Exercise those three by hand on Windows.
+CI cannot reach the Steam launch option, the background monitor across a real game session, or a manual restore. Exercise those three by hand on Windows. The same goes for an app update: run a debug build with `APP_UPDATE_PRETEND_VERSION` set to an older version.
 
 ## Bump CI tool pins by hand
 

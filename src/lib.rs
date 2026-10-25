@@ -12,6 +12,7 @@ pub mod paths;
 pub mod platform;
 pub mod retention;
 pub mod snapshot;
+pub mod update;
 
 pub const APP_NAME: &str = "EldenRingSaveGuard";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -24,6 +24,9 @@ pub struct Config {
     pub periodic: bool,
     pub post_exit: bool,
     pub log_level: String,
+    /// How often the dashboard checks for a new app version, and what the
+    /// user chose to skip. The background monitor never reads it.
+    pub app_updates: crate::update::Settings,
 }
 
 impl Default for Config {
@@ -38,6 +41,7 @@ impl Default for Config {
             periodic: true,
             post_exit: true,
             log_level: "info".to_string(),
+            app_updates: crate::update::Settings::default(),
         }
     }
 }
@@ -193,5 +197,23 @@ mod tests {
         assert_eq!(r.config.selected_steamid.as_deref(), Some("123"));
         assert_eq!(r.config.interval_secs, DEFAULT_INTERVAL_SECS);
         assert!(r.recovered_from.is_none());
+    }
+
+    #[test]
+    fn update_settings_round_trip_and_default_when_absent() {
+        let dir = tmpdir();
+        let path = dir.join("config.json");
+        // A config written before the updater existed keeps its other fields.
+        std::fs::write(&path, br#"{"selected_steamid":"123","retention":7}"#).unwrap();
+        let r = load(&path);
+        assert_eq!(r.config.app_updates, crate::update::Settings::default());
+        assert_eq!(r.config.retention, 7);
+
+        let mut cfg = r.config;
+        cfg.app_updates.period = crate::update::CheckPeriod::Weekly;
+        cfg.app_updates.last_check = Some(1_700_000_000);
+        cfg.app_updates.skipped = Some("1.2.0".into());
+        save(&path, &cfg).unwrap();
+        assert_eq!(load(&path).config, cfg);
     }
 }
