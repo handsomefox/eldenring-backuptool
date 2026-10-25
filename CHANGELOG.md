@@ -2,6 +2,11 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.2.0
+
+- Save Guard can now update itself from its GitHub releases. It checks once a day, and when a new version is out, a chip in the header names it. Click the chip to read what changed since your version, then download the update, skip that version, or leave it for later. The download must match its published SHA-256 checksums before it replaces the app, and a restart finishes the install. A restart waits for a running backup. To check more or less often, or never, open the **Help** tab > **App updates**. The background monitor that Steam starts never checks.
+- Getting 1.2.0 itself is still a manual download. Later versions install from inside the app.
+
 ## 1.1.2
 
 - Replace the yanked clipboard-win 5.4.1 with 5.4.3.
