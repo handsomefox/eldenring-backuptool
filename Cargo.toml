@@ -34,7 +34,7 @@ tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
 directories = "=6.0.0"
 # The self-updater in `update.rs`, shared byte-for-byte with the other apps.
-flate2 = { version = "=1.1.9", default-features = false, features = ["zlib-rs"] }
+flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
 reqwest = { version = "=0.13.5", default-features = false, features = ["blocking", "json", "rustls-no-provider"] }
 # reqwest's `rustls-no-provider` feature deliberately selects no crypto backend;
 # this direct dependency exposes ring, which `update::Client` installs once.
