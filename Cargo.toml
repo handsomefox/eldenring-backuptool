@@ -42,8 +42,8 @@ rustls = { version = "=0.23.46", default-features = false, features = ["ring", "
 tar = { version = "=0.4.46", default-features = false }
 thiserror = "=2.0.21"
 # GUI + dialogs: optional, enabled by the `gui` feature (see [features]).
-eframe = { version = "=0.36.2", default-features = false, features = ["default_fonts", "glow", "x11"], optional = true }
-egui = { version = "=0.36.2", optional = true }
+eframe = { version = "=0.37.0", default-features = false, features = ["default_fonts", "glow", "x11"], optional = true }
+egui = { version = "=0.37.0", optional = true }
 rfd = { version = "=0.17.2", default-features = false, features = ["common-controls-v6", "xdg-portal"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
