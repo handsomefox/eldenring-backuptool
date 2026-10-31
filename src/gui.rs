@@ -29,7 +29,13 @@ pub(crate) fn run() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([720.0, 560.0])
             .with_min_inner_size([560.0, 420.0])
-            .with_title("Elden Ring Save Guard"),
+            .with_title("Elden Ring Save Guard")
+            // Without an icon eframe shows egui's own in the title bar and
+            // taskbar.
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
+                    .expect("the bundled app icon is a valid PNG"),
+            ),
         ..Default::default()
     };
     let result = eframe::run_native(
