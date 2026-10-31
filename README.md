@@ -54,7 +54,7 @@ Versions 1.0.6 and earlier were called `Elden Ring Backuptool.exe`. If you upgra
 
 ## Updates
 
-The Save Guard window checks this repository's GitHub releases for a new version once a day. To check more or less often, or never, open the Help tab and click **App updates…**. A check is one request to the GitHub API, and it sends nothing about you or your saves. The background monitor that Steam starts never checks for updates and never contacts GitHub.
+The Save Guard window checks this repository's GitHub releases for a new version each time it starts. To check less often, or never, open the Help tab and click **App updates…**. A check is one request to the GitHub API, and it sends nothing about you or your saves. The background monitor that Steam starts never checks for updates and never contacts GitHub.
 
 When a new version is out, a button in the header names it. Click it to read the notes of every release since yours, then choose **Download update**, **Skip this version**, or **Not now**. The download must match both the release's `SHA256SUMS` and the SHA-256 that GitHub records for the file. **Restart to update** moves the new `eldenring-backuptool.exe` into the same path and reopens the window, so the Steam launch option keeps working. The replaced executable stays beside it as `eldenring-backuptool.exe.old` until a later start. If the monitor is still running from it during a game, the file stays until the game exits.
 

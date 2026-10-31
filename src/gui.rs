@@ -856,9 +856,7 @@ fn update_status(ui: &mut egui::Ui, updater: &Updater, settings: &update::Settin
     } else if updater.is_up_to_date() {
         ui.colored_label(GREEN, format!("Version {current} is the latest version."));
     } else {
-        ui.label(format!(
-            "You have version {current}. It has not checked for a new version yet."
-        ));
+        ui.label(format!("You have version {current}."));
     }
     if let Some(error) = updater.error() {
         ui.add_space(6.0);
