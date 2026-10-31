@@ -2,6 +2,12 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.2.2
+
+- New installs check for a new version each time the Save Guard window opens. Existing installs keep their setting. To change it, open the **Help** tab > **App updates**.
+- Keep a found update visible after a restart. With a check period of a day or longer, a restart hid the new version until the next check was due.
+- Remove the line in **App updates** that said no check had run, which appeared beside the time of the last check.
+
 ## 1.2.1
 
 - Show a Save Guard icon in the title bar and the taskbar, where egui's default icon appeared before. The `.exe` file keeps the generic Windows icon in Explorer.
