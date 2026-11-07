@@ -168,7 +168,7 @@ fn backup(target: &Target, reason: Reason) {
         );
         return;
     };
-    let sources = source_files(&candidate);
+    let sources = candidate.source_files();
     match snapshot::create(&target.dest, &target.steamid, &sources, reason) {
         Ok(Some(snap)) => {
             tracing::info!(
@@ -184,16 +184,6 @@ fn backup(target: &Target, reason: Reason) {
         Ok(None) => tracing::debug!("{} backup skipped: save unchanged", reason.label()),
         Err(e) => tracing::warn!("{} backup failed: {e:#}", reason.label()),
     }
-}
-
-/// The vanilla save file plus its `.sl2.bak` sibling when present.
-#[must_use]
-pub fn source_files(candidate: &SaveCandidate) -> Vec<PathBuf> {
-    let mut v = vec![candidate.save_file.clone()];
-    if let Some(bak) = &candidate.bak_file {
-        v.push(bak.clone());
-    }
-    v
 }
 
 /// Poll `cond` every [`PROCESS_POLL`] until it is true or `timeout` elapses.

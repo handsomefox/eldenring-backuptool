@@ -17,6 +17,18 @@ pub struct SaveCandidate {
     pub size: u64,
 }
 
+impl SaveCandidate {
+    /// The vanilla save file plus its `.sl2.bak` sibling when present.
+    #[must_use]
+    pub fn source_files(&self) -> Vec<PathBuf> {
+        let mut v = vec![self.save_file.clone()];
+        if let Some(bak) = &self.bak_file {
+            v.push(bak.clone());
+        }
+        v
+    }
+}
+
 fn is_steamid_dir_name(name: &str) -> bool {
     !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit())
 }

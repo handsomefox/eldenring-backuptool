@@ -10,7 +10,6 @@ use chrono::{DateTime, Local, Utc};
 use save_guard::config::{self, Config, MAX_RETENTION, MIN_INTERVAL_SECS};
 use save_guard::discovery::{self, SaveCandidate};
 use save_guard::launch;
-use save_guard::monitor::source_files;
 use save_guard::paths;
 use save_guard::platform;
 use save_guard::snapshot::{self, Reason, Snapshot};
@@ -276,7 +275,7 @@ impl App {
         self.start_job(true, move || {
             let result = (|| -> anyhow::Result<String> {
                 paths::validate_backup_dest(&candidate.dir, &dest)?;
-                let sources = source_files(&candidate);
+                let sources = candidate.source_files();
                 match snapshot::create(&dest, &candidate.steamid, &sources, Reason::Manual)? {
                     Some(snap) => {
                         save_guard::retention::apply(&dest, &candidate.steamid, config.retention);
