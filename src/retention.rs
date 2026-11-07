@@ -3,24 +3,19 @@
 
 use std::path::Path;
 
-use anyhow::Result;
-
 use crate::snapshot::{self, Snapshot};
 
 /// Delete oldest snapshots beyond `keep`. Returns the directories removed.
 /// Retention is applied only after a new snapshot is finalized, so a live
 /// snapshot is never deleted before its replacement exists. Retention uses the
 /// same bounded structural listing as [`snapshot::list`] and does not hash
-/// archive payloads.
-///
-/// # Errors
-///
-/// Returns an error if the managed snapshot set cannot be read.
-pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Result<Vec<Snapshot>> {
+/// archive payloads. A snapshot that cannot be removed is logged and left in
+/// place.
+pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Vec<Snapshot> {
     let keep = keep.max(1);
     let snaps = snapshot::list(dest, steamid); // oldest → newest, temp dirs excluded
     if snaps.len() <= keep {
-        return Ok(Vec::new());
+        return Vec::new();
     }
     let snaps_dir = snapshot::snapshots_dir(dest);
     let remove_count = snaps.len() - keep;
@@ -30,11 +25,12 @@ pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Result<Vec<Snapshot>> {
         if snap.dir.parent() != Some(snaps_dir.as_path()) {
             continue;
         }
-        if std::fs::remove_dir_all(&snap.dir).is_ok() {
-            removed.push(snap);
+        match std::fs::remove_dir_all(&snap.dir) {
+            Ok(()) => removed.push(snap),
+            Err(e) => tracing::warn!("could not remove old snapshot {}: {e}", snap.dir.display()),
         }
     }
-    Ok(removed)
+    removed
 }
 
 #[cfg(test)]
@@ -72,7 +68,7 @@ mod tests {
     fn keeps_newest_n() {
         let d = dest();
         make_snapshots(&d, 5);
-        let removed = apply(&d, "111", 3).unwrap();
+        let removed = apply(&d, "111", 3);
         assert_eq!(removed.len(), 2);
         let remaining = snapshot::list(&d, "111");
         assert_eq!(remaining.len(), 3);
@@ -87,7 +83,7 @@ mod tests {
     fn under_limit_deletes_nothing() {
         let d = dest();
         make_snapshots(&d, 2);
-        assert!(apply(&d, "111", 60).unwrap().is_empty());
+        assert!(apply(&d, "111", 60).is_empty());
         assert_eq!(snapshot::list(&d, "111").len(), 2);
     }
 
@@ -98,7 +94,7 @@ mod tests {
         // A stray temp dir must be neither counted nor deleted by retention.
         let stray = snapshot::snapshots_dir(&d).join(".tmp-999-999");
         std::fs::create_dir_all(&stray).unwrap();
-        apply(&d, "111", 1).unwrap();
+        apply(&d, "111", 1);
         assert!(stray.exists());
         assert_eq!(snapshot::list(&d, "111").len(), 1);
     }
@@ -120,7 +116,7 @@ mod tests {
                 .unwrap();
         }
 
-        assert_eq!(apply(&d, "111", 1).unwrap().len(), 1);
+        assert_eq!(apply(&d, "111", 1).len(), 1);
         assert_eq!(snapshot::list(&d, "111").len(), 1);
         assert_eq!(snapshot::list(&d, "222").len(), 2);
     }

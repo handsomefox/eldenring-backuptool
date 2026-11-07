@@ -279,7 +279,7 @@ impl App {
                 let sources = source_files(&candidate);
                 match snapshot::create(&dest, &candidate.steamid, &sources, Reason::Manual)? {
                     Some(snap) => {
-                        save_guard::retention::apply(&dest, &candidate.steamid, config.retention)?;
+                        save_guard::retention::apply(&dest, &candidate.steamid, config.retention);
                         Ok(format!("Backed up: {}", dir_name(&snap.dir)))
                     }
                     None => Ok("Save unchanged. No new backup needed.".into()),

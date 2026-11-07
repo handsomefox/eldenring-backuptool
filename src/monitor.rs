@@ -176,12 +176,9 @@ fn backup(target: &Target, reason: Reason) {
                 reason.label(),
                 snap.dir.display()
             );
-            match retention::apply(&target.dest, &target.steamid, target.config.retention) {
-                Ok(removed) if !removed.is_empty() => {
-                    tracing::info!("retention removed {} old snapshot(s)", removed.len());
-                }
-                Ok(_) => {}
-                Err(e) => tracing::warn!("retention failed: {e:#}"),
+            let removed = retention::apply(&target.dest, &target.steamid, target.config.retention);
+            if !removed.is_empty() {
+                tracing::info!("retention removed {} old snapshot(s)", removed.len());
             }
         }
         Ok(None) => tracing::debug!("{} backup skipped: save unchanged", reason.label()),
