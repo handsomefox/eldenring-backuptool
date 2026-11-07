@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local, Utc};
 
@@ -22,6 +23,10 @@ const APP_INFO: update::AppInfo = update::AppInfo {
     bin: "eldenring-backuptool",
     version: save_guard::APP_VERSION,
 };
+
+/// How long the dashboard reuses its last check for a running game. Each
+/// check enumerates every process, which is too slow to repeat every frame.
+const GAME_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
 pub(crate) fn run() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -76,6 +81,10 @@ struct App {
     free_space: Option<u64>,
     updater: Updater,
     update_window_open: bool,
+    /// When the game was last looked for, and whether it was running.
+    game_check: Option<(Instant, bool)>,
+    /// The Steam launch option for this executable, shown on the Help tab.
+    launch_option: String,
 }
 
 /// What the user chose in the update window this frame.
@@ -145,6 +154,8 @@ impl App {
             None => (Config::default(), None),
         };
         let elden_root = paths::elden_ring_root().ok();
+        let exe =
+            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("eldenring-backuptool.exe"));
         let mut app = Self {
             dest_edit: config
                 .backup_dest
@@ -169,6 +180,8 @@ impl App {
             ctx,
             job: None,
             free_space: None,
+            game_check: None,
+            launch_option: launch::launch_option(&exe),
         };
         app.refresh();
         app
@@ -223,6 +236,20 @@ impl App {
         self.job
             .as_ref()
             .is_some_and(|job| job.kind == JobKind::Backup)
+    }
+
+    fn game_running(&mut self) -> bool {
+        let now = Instant::now();
+        match self.game_check {
+            Some((checked, running)) if now.duration_since(checked) < GAME_CHECK_INTERVAL => {
+                running
+            }
+            _ => {
+                let running = platform::process_running(save_guard::GAME_PROCESS);
+                self.game_check = Some((now, running));
+                running
+            }
+        }
     }
 
     fn selected_candidate(&self) -> Option<&SaveCandidate> {
@@ -474,12 +501,13 @@ impl App {
         } else {
             (egui::Color32::from_rgb(200, 140, 60), "Setup incomplete")
         };
+        let game_running = self.game_running();
         ui.horizontal(|ui| {
             // Painted rather than typed: egui's default fonts have no "●".
             let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
             ui.painter().circle_filled(dot.center(), 4.5, color);
             ui.strong(text);
-            if platform::process_running(save_guard::GAME_PROCESS) {
+            if game_running {
                 ui.separator();
                 ui.label("Elden Ring is running");
             }
@@ -573,18 +601,21 @@ impl App {
         ui.add_space(8.0);
         ui.strong("Steam accounts with saves");
         ui.label("Only the account you select here is backed up. Switching does not delete another account's backups.");
-        let candidates = self.candidates.clone();
-        let selected = self.config.selected_steamid.clone();
-        for c in &candidates {
-            let is_sel = selected.as_deref() == Some(c.steamid.as_str());
+        let selected = self.config.selected_steamid.as_deref();
+        let mut clicked = None;
+        for c in &self.candidates {
+            let is_sel = selected == Some(c.steamid.as_str());
             let label = format!(
                 "{}  —  saved {}",
                 c.steamid,
                 c.modified.map_or_else(|| "unknown".into(), system_local)
             );
             if ui.radio(is_sel, label).clicked() && !is_sel {
-                self.select_account(&c.steamid);
+                clicked = Some(c.steamid.clone());
             }
+        }
+        if let Some(steamid) = clicked {
+            self.select_account(&steamid);
         }
     }
 
@@ -606,7 +637,6 @@ impl App {
             return;
         }
 
-        let snaps = self.snapshots.clone();
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("snap_grid")
                 .num_columns(5)
@@ -619,7 +649,7 @@ impl App {
                     ui.strong("Reason");
                     ui.strong("");
                     ui.end_row();
-                    for s in &snaps {
+                    for s in &self.snapshots {
                         ui.label(local_time(s.metadata.created_utc));
                         ui.label(relative_age(s.metadata.created_utc));
                         ui.label(human_size(s.stored_size()));
@@ -690,9 +720,7 @@ impl App {
         ui.label("Copy the command below into Steam > Elden Ring > Properties > General > Launch Options. This makes backups happen automatically every time you play, even with this window closed.");
         ui.add_space(4.0);
 
-        let exe =
-            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("eldenring-backuptool.exe"));
-        let mut cmd = launch::launch_option(&exe);
+        let mut cmd = self.launch_option.clone();
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut cmd)
@@ -1048,9 +1076,6 @@ mod tests {
         .unwrap();
         assert!(matches!(job.try_recv(), Err(TryRecvError::Empty)));
         release.send(()).unwrap();
-        assert_eq!(
-            job.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
-            42
-        );
+        assert_eq!(job.recv_timeout(Duration::from_secs(5)).unwrap(), 42);
     }
 }
