@@ -13,6 +13,7 @@ use save_guard::discovery::{self, SaveCandidate};
 use save_guard::launch;
 use save_guard::paths;
 use save_guard::platform;
+use save_guard::retention;
 use save_guard::snapshot::{self, Reason, Snapshot};
 use save_guard::update::{self, CheckPeriod, NoteBlock, Updater};
 
@@ -313,11 +314,14 @@ impl App {
             let result = (|| -> anyhow::Result<String> {
                 paths::validate_backup_dest(&candidate.dir, &dest)?;
                 let sources = candidate.source_files();
-                match snapshot::create(&dest, &candidate.steamid, &sources, Reason::Manual)? {
-                    Some(snap) => {
-                        save_guard::retention::apply(&dest, &candidate.steamid, config.retention);
-                        Ok(format!("Backed up: {}", dir_name(&snap.dir)))
-                    }
+                match retention::create_and_prune(
+                    &dest,
+                    &candidate.steamid,
+                    &sources,
+                    Reason::Manual,
+                    config.retention,
+                )? {
+                    Some((snap, _)) => Ok(format!("Backed up: {}", dir_name(&snap.dir))),
                     None => Ok("Save unchanged. No new backup needed.".into()),
                 }
             })();

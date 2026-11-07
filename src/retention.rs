@@ -1,9 +1,33 @@
 //! Per-SteamID snapshot retention. Only ever deletes finalized snapshot
 //! directories that live directly under `<dest>/snapshots/`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::snapshot::{self, Snapshot};
+use anyhow::Result;
+
+use crate::snapshot::{self, Reason, Snapshot};
+
+/// Create a snapshot of `source_files` and, only once it is finalized, prune
+/// the account's snapshots down to `keep`. Returns the new snapshot and the
+/// ones removed, or `Ok(None)` when the save is unchanged and nothing was
+/// created or pruned.
+///
+/// # Errors
+///
+/// Returns an error if [`snapshot::create`] fails; nothing is pruned then.
+pub fn create_and_prune(
+    dest: &Path,
+    steamid: &str,
+    source_files: &[PathBuf],
+    reason: Reason,
+    keep: usize,
+) -> Result<Option<(Snapshot, Vec<Snapshot>)>> {
+    let Some(snapshot) = snapshot::create(dest, steamid, source_files, reason)? else {
+        return Ok(None);
+    };
+    let removed = apply(dest, steamid, keep);
+    Ok(Some((snapshot, removed)))
+}
 
 /// Delete oldest snapshots beyond `keep`. Returns the directories removed.
 /// Retention is applied only after a new snapshot is finalized, so a live
@@ -36,8 +60,7 @@ pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Vec<Snapshot> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snapshot::{Reason, create};
-    use std::path::PathBuf;
+    use crate::snapshot::create;
 
     fn dest() -> PathBuf {
         let p = std::env::temp_dir().join(format!(
@@ -77,6 +100,34 @@ mod tests {
         let out = newest.dir.join("extracted");
         snapshot::extract(&newest.dir, &out).unwrap();
         assert_eq!(std::fs::read(out.join("ER0000.sl2")).unwrap(), b"content-4");
+    }
+
+    #[test]
+    fn create_and_prune_prunes_only_after_a_new_snapshot() {
+        let d = dest();
+        make_snapshots(&d, 3);
+        let src = d.join("ER0000.sl2");
+        let sources = std::slice::from_ref(&src);
+
+        assert!(
+            create_and_prune(&d, "111", sources, Reason::Periodic, 1)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            snapshot::list(&d, "111").len(),
+            3,
+            "unchanged save prunes nothing"
+        );
+
+        std::fs::write(&src, b"content-new").unwrap();
+        let (created, removed) = create_and_prune(&d, "111", sources, Reason::Periodic, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(removed.len(), 3);
+        let remaining = snapshot::list(&d, "111");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].dir, created.dir);
     }
 
     #[test]

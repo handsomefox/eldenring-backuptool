@@ -17,7 +17,7 @@ use crate::config::Config;
 use crate::discovery::{self, SaveCandidate};
 use crate::launch::{GameCommand, parse_monitor_args};
 use crate::platform::{self, SingleInstance};
-use crate::snapshot::{self, Reason};
+use crate::snapshot::Reason;
 use crate::{GAME_PROCESS, retention};
 
 const MUTEX_NAME: &str = "EldenRingSaveGuardMonitor";
@@ -164,14 +164,19 @@ fn backup(target: &Target, reason: Reason) {
         return;
     };
     let sources = candidate.source_files();
-    match snapshot::create(&target.dest, &target.steamid, &sources, reason) {
-        Ok(Some(snap)) => {
+    match retention::create_and_prune(
+        &target.dest,
+        &target.steamid,
+        &sources,
+        reason,
+        target.config.retention,
+    ) {
+        Ok(Some((snap, removed))) => {
             tracing::info!(
                 "{} snapshot created: {}",
                 reason.label(),
                 snap.dir.display()
             );
-            let removed = retention::apply(&target.dest, &target.steamid, target.config.retention);
             if !removed.is_empty() {
                 tracing::info!("retention removed {} old snapshot(s)", removed.len());
             }
