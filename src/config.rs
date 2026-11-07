@@ -131,9 +131,15 @@ pub fn save(path: &Path, config: &Config) -> Result<()> {
     let json = serde_json::to_vec_pretty(&config)?;
 
     let tmp = dir.join(format!(".config.tmp-{}", std::process::id()));
-    std::fs::write(&tmp, &json).with_context(|| format!("writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("finalizing {}", path.display()))?;
-    Ok(())
+    let result = std::fs::write(&tmp, &json)
+        .with_context(|| format!("writing {}", tmp.display()))
+        .and_then(|()| {
+            std::fs::rename(&tmp, path).with_context(|| format!("finalizing {}", path.display()))
+        });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -174,6 +180,21 @@ mod tests {
         let r = load(&path);
         assert_eq!(r.config, cfg);
         assert!(r.recovered_from.is_none());
+    }
+
+    #[test]
+    fn failed_save_leaves_no_temp_file() {
+        let dir = tmpdir();
+        // A directory in the way makes the final rename fail.
+        let path = dir.join("config.json");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("keep"), b"").unwrap();
+        assert!(save(&path, &Config::default()).is_err());
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["config.json"]);
     }
 
     #[test]
