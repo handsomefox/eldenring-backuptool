@@ -127,13 +127,27 @@ fn source_name(path: &Path) -> Result<String> {
         .file_name()
         .and_then(|n| n.to_str())
         .context("source file has no valid name")?;
-    if name.contains(['/', '\\']) {
+    if !is_plain_file_name(name) {
         bail!("source file has an unsafe name: {name}");
     }
     Ok(name.to_string())
 }
 
-fn hash_reader(name: &str, reader: &mut impl Read, limit: u64) -> Result<FileHash> {
+/// A bare file name: not empty, no path separators, and not `.` or `..`.
+fn is_plain_file_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains(['/', '\\'])
+        && Path::new(name).file_name().and_then(|n| n.to_str()) == Some(name)
+}
+
+/// Stream `reader` into `writer` while hashing it, failing as soon as more
+/// than `limit` bytes arrive.
+fn copy_hashed(
+    name: &str,
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    limit: u64,
+) -> Result<FileHash> {
     let mut hasher = Sha256::new();
     let mut size = 0u64;
     let mut buf = vec![0u8; IO_BUFFER_BYTES];
@@ -149,12 +163,17 @@ fn hash_reader(name: &str, reader: &mut impl Read, limit: u64) -> Result<FileHas
             bail!("{name} exceeds the {limit}-byte safety limit");
         }
         hasher.update(&buf[..n]);
+        writer.write_all(&buf[..n])?;
     }
     Ok(FileHash {
         name: name.to_string(),
         sha256: finish_sha256(hasher),
         size,
     })
+}
+
+fn hash_reader(name: &str, reader: &mut impl Read, limit: u64) -> Result<FileHash> {
+    copy_hashed(name, reader, &mut std::io::sink(), limit)
 }
 
 fn finish_sha256(hasher: Sha256) -> String {
@@ -169,9 +188,7 @@ fn finish_sha256(hasher: Sha256) -> String {
 }
 
 fn hash_source(path: &Path) -> Result<FileHash> {
-    let name = source_name(path)?;
-    let mut file = File::open(path).with_context(|| format!("reading {}", path.display()))?;
-    hash_reader(&name, &mut file, MAX_SOURCE_FILE_BYTES)
+    hash_file(path, &source_name(path)?, MAX_SOURCE_FILE_BYTES)
 }
 
 fn hash_sources(files: &[PathBuf]) -> Result<Vec<FileHash>> {
@@ -190,11 +207,7 @@ fn validate_file_hashes(files: &[FileHash]) -> Result<()> {
     let mut names = HashSet::new();
     let mut total = 0u64;
     for file in files {
-        if file.name.is_empty()
-            || file.name.contains(['/', '\\'])
-            || Path::new(&file.name).file_name().and_then(|n| n.to_str())
-                != Some(file.name.as_str())
-        {
+        if !is_plain_file_name(&file.name) {
             bail!("unsafe snapshot file name: {}", file.name);
         }
         if !names.insert(file.name.as_str()) {
@@ -526,26 +539,12 @@ fn write_archive(zip_path: &Path, source_files: &[PathBuf]) -> Result<Vec<FileHa
         }
         zip.start_file(&name, opts)?;
         let mut source = File::open(path)?;
-        let mut file_hasher = Sha256::new();
-        let mut size = 0u64;
-        let mut buf = vec![0u8; IO_BUFFER_BYTES];
-        loop {
-            let n = source.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            size = size.checked_add(n as u64).context("source size overflow")?;
-            if size > MAX_SOURCE_FILE_BYTES {
-                bail!("{name} exceeds the source-file safety limit");
-            }
-            file_hasher.update(&buf[..n]);
-            zip.write_all(&buf[..n])?;
-        }
-        hashes.push(FileHash {
-            name,
-            sha256: finish_sha256(file_hasher),
-            size,
-        });
+        hashes.push(copy_hashed(
+            &name,
+            &mut source,
+            &mut zip,
+            MAX_SOURCE_FILE_BYTES,
+        )?);
     }
     zip.finish()?;
     validate_file_hashes(&hashes)?;
@@ -564,13 +563,7 @@ fn verify_archive(zip_path: &Path, expected: &[FileHash]) -> Result<()> {
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let name = entry.name()?.to_string();
-        if entry.is_dir() || name.contains(['/', '\\']) || !seen.insert(name.clone()) {
-            bail!("unsafe or duplicate archive entry: {name}");
-        }
-        let exp = expected
-            .iter()
-            .find(|file| file.name == name)
-            .with_context(|| format!("unexpected archive entry {name}"))?;
+        let exp = expected_entry(&name, entry.is_dir(), &mut seen, expected)?;
         let actual = hash_reader(&name, &mut entry, MAX_SOURCE_FILE_BYTES)?;
         total = total
             .checked_add(actual.size)
@@ -580,6 +573,23 @@ fn verify_archive(zip_path: &Path, expected: &[FileHash]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Check one archive entry's name and return the metadata entry it must match.
+/// `seen` collects the names already checked, so a duplicate is rejected.
+fn expected_entry<'a>(
+    name: &str,
+    is_dir: bool,
+    seen: &mut HashSet<String>,
+    expected: &'a [FileHash],
+) -> Result<&'a FileHash> {
+    if is_dir || !is_plain_file_name(name) || !seen.insert(name.to_string()) {
+        bail!("unsafe or duplicate archive entry: {name}");
+    }
+    expected
+        .iter()
+        .find(|file| file.name == name)
+        .with_context(|| format!("unexpected archive entry {name}"))
 }
 
 /// Fully verify and extract a snapshot into a new output directory.
@@ -604,50 +614,18 @@ pub fn extract(snapshot_dir: &Path, out_dir: &Path) -> Result<()> {
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let name = entry.name()?.to_string();
-        if entry.is_dir()
-            || name.contains(['/', '\\'])
-            || Path::new(&name).file_name().and_then(|n| n.to_str()) != Some(name.as_str())
-            || !seen.insert(name.clone())
-        {
-            bail!("unsafe or duplicate archive entry: {name}");
-        }
-        let expected = snapshot
-            .metadata
-            .files
-            .iter()
-            .find(|file| file.name == name)
-            .with_context(|| format!("unexpected archive entry {name}"))?;
+        let expected = expected_entry(&name, entry.is_dir(), &mut seen, &snapshot.metadata.files)?;
         let output_path = out_dir.join(&name);
         let mut output = File::options()
             .write(true)
             .create_new(true)
             .open(&output_path)
             .with_context(|| format!("creating {}", output_path.display()))?;
-        let result = (|| -> Result<FileHash> {
-            let mut hasher = Sha256::new();
-            let mut size = 0u64;
-            let mut buf = vec![0u8; IO_BUFFER_BYTES];
-            loop {
-                let n = entry.read(&mut buf)?;
-                if n == 0 {
-                    break;
-                }
-                size = size
-                    .checked_add(n as u64)
-                    .context("archive size overflow")?;
-                if size > MAX_SOURCE_FILE_BYTES {
-                    bail!("archive entry {name} exceeds the safety limit");
-                }
-                hasher.update(&buf[..n]);
-                output.write_all(&buf[..n])?;
-            }
-            output.sync_all()?;
-            Ok(FileHash {
-                name: name.clone(),
-                sha256: finish_sha256(hasher),
-                size,
-            })
-        })();
+        let result =
+            copy_hashed(&name, &mut entry, &mut output, MAX_SOURCE_FILE_BYTES).and_then(|actual| {
+                output.sync_all()?;
+                Ok(actual)
+            });
         let actual = match result {
             Ok(actual) => actual,
             Err(error) => {
