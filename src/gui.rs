@@ -72,8 +72,7 @@ struct App {
     interval_edit: String,
     retention_edit: String,
     ctx: egui::Context,
-    pending: Option<Receiver<LoadedView>>,
-    backup_active: bool,
+    job: Option<Job>,
     free_space: Option<u64>,
     updater: Updater,
     update_window_open: bool,
@@ -85,6 +84,18 @@ enum UpdateAction {
     Restart,
     Skip,
     Later,
+}
+
+/// Background work in flight. Only one job runs at a time.
+struct Job {
+    kind: JobKind,
+    receiver: Receiver<LoadedView>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JobKind {
+    Refresh,
+    Backup,
 }
 
 struct LoadedView {
@@ -156,8 +167,7 @@ impl App {
             }),
             update_window_open: false,
             ctx,
-            pending: None,
-            backup_active: false,
+            job: None,
             free_space: None,
         };
         app.refresh();
@@ -167,22 +177,21 @@ impl App {
     fn refresh(&mut self) {
         let config = self.config.clone();
         let root = self.elden_root.clone();
-        self.start_job(false, move || load_view(&config, root.as_deref()));
+        self.start_job(JobKind::Refresh, move || {
+            load_view(&config, root.as_deref())
+        });
     }
 
     fn reload_snapshots(&mut self) {
         self.refresh();
     }
 
-    fn start_job(&mut self, backup: bool, work: impl FnOnce() -> LoadedView + Send + 'static) {
-        if self.pending.is_some() {
+    fn start_job(&mut self, kind: JobKind, work: impl FnOnce() -> LoadedView + Send + 'static) {
+        if self.job.is_some() {
             return;
         }
         match spawn_job(self.ctx.clone(), work) {
-            Ok(receiver) => {
-                self.pending = Some(receiver);
-                self.backup_active = backup;
-            }
+            Ok(receiver) => self.job = Some(Job { kind, receiver }),
             Err(error) => {
                 self.status = Some((true, format!("Could not start background work: {error}")));
             }
@@ -190,10 +199,10 @@ impl App {
     }
 
     fn poll_job(&mut self) {
-        let Some(receiver) = &self.pending else {
+        let Some(job) = &self.job else {
             return;
         };
-        match receiver.try_recv() {
+        match job.receiver.try_recv() {
             Ok(view) => {
                 self.candidates = view.candidates;
                 self.snapshots = view.snapshots;
@@ -207,8 +216,13 @@ impl App {
                 self.status = Some((true, "Background work stopped unexpectedly.".into()));
             }
         }
-        self.pending = None;
-        self.backup_active = false;
+        self.job = None;
+    }
+
+    fn backing_up(&self) -> bool {
+        self.job
+            .as_ref()
+            .is_some_and(|job| job.kind == JobKind::Backup)
     }
 
     fn selected_candidate(&self) -> Option<&SaveCandidate> {
@@ -259,7 +273,7 @@ impl App {
     }
 
     fn backup_now(&mut self) {
-        if self.pending.is_some() {
+        if self.job.is_some() {
             return;
         }
         let Some(candidate) = self.selected_candidate().cloned() else {
@@ -272,7 +286,7 @@ impl App {
         };
         let config = self.config.clone();
         let root = self.elden_root.clone();
-        self.start_job(true, move || {
+        self.start_job(JobKind::Backup, move || {
             let result = (|| -> anyhow::Result<String> {
                 paths::validate_backup_dest(&candidate.dir, &dest)?;
                 let sources = candidate.source_files();
@@ -344,7 +358,7 @@ impl eframe::App for App {
         if self.config.app_updates != before {
             self.save_update_settings();
         }
-        if self.backup_active && ui.ctx().input(|input| input.viewport().close_requested()) {
+        if self.backing_up() && ui.ctx().input(|input| input.viewport().close_requested()) {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.status = Some((
@@ -362,7 +376,7 @@ impl eframe::App for App {
                 ui.selectable_value(&mut self.tab, Tab::Help, "Help");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add_enabled(self.pending.is_none(), egui::Button::new("⟳ Refresh"))
+                        .add_enabled(self.job.is_none(), egui::Button::new("⟳ Refresh"))
                         .clicked()
                     {
                         self.refresh();
@@ -388,17 +402,17 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default().show(ui, |ui| {
-            if self.pending.is_some() {
+            if self.job.is_some() {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(if self.backup_active {
+                    ui.label(if self.backing_up() {
                         "Creating backup…"
                     } else {
                         "Loading saves and backups…"
                     });
                 });
             }
-            ui.add_enabled_ui(self.pending.is_none(), |ui| match self.tab {
+            ui.add_enabled_ui(self.job.is_none(), |ui| match self.tab {
                 Tab::Dashboard => self.dashboard(ui),
                 Tab::Backups => self.backups(ui),
                 Tab::Settings => self.settings(ui),
@@ -755,7 +769,7 @@ impl App {
         let mut check = false;
         let mut action = None;
         // A restart closes the window, so it waits for a backup or a reload.
-        let busy = self.pending.is_some();
+        let busy = self.job.is_some();
         let updater = &self.updater;
         let settings = &self.config.app_updates;
         egui::Window::new("App updates")
