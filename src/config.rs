@@ -94,6 +94,19 @@ pub fn load(path: &Path) -> LoadResult {
     }
 }
 
+/// The configured log level. Unlike [`load`], this never moves a malformed
+/// file aside, so the dashboard's own [`load`] still finds it and can tell the
+/// user their settings were reset.
+#[must_use]
+pub fn log_level(path: &Path) -> String {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Config>(&bytes).ok())
+        .unwrap_or_default()
+        .sanitized()
+        .log_level
+}
+
 fn preserve_broken(path: &Path) -> Option<PathBuf> {
     let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let mut bad = path.as_os_str().to_owned();
@@ -173,6 +186,19 @@ mod tests {
         let preserved = r.recovered_from.expect("broken file preserved");
         assert!(preserved.exists());
         assert!(!path.exists(), "original replaced by defaults on next save");
+    }
+
+    #[test]
+    fn log_level_leaves_a_malformed_file_for_load_to_recover() {
+        let dir = tmpdir();
+        let path = dir.join("config.json");
+        std::fs::write(&path, br#"{"log_level":"debug"}"#).unwrap();
+        assert_eq!(log_level(&path), "debug");
+
+        std::fs::write(&path, b"{ not valid json").unwrap();
+        assert_eq!(log_level(&path), "info");
+        assert!(path.exists());
+        assert!(load(&path).recovered_from.is_some());
     }
 
     #[test]

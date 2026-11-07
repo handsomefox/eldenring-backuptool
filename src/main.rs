@@ -34,7 +34,7 @@ fn main() -> ExitCode {
 fn init_logging() {
     let level = save_guard::paths::config_path().map_or_else(
         |_| "info".to_string(),
-        |p| save_guard::config::load(&p).config.log_level,
+        |p| save_guard::config::log_level(&p),
     );
     if let Ok(dir) = save_guard::paths::log_dir() {
         let _ = save_guard::logging::init(&dir, &level);
