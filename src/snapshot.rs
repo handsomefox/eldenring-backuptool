@@ -430,17 +430,18 @@ pub fn create_with_hook(
                     source_modified_utc,
                     reason,
                     app_version: APP_VERSION.to_string(),
-                    files: hashes.clone(),
+                    files: hashes,
                     archive: ARCHIVE_FILE.to_string(),
                     stored_bytes,
                     archive_sha256,
                 };
-                let json = serde_json::to_vec_pretty(&metadata)?;
-                std::fs::write(tmp.join(METADATA_FILE), &json)?;
-
-                let final_dir = unique_final_dir(&snaps_dir, created, &hashes);
-                std::fs::rename(&tmp, &final_dir)
-                    .with_context(|| format!("finalizing snapshot {}", final_dir.display()))?;
+                let final_dir = match finalize(&tmp, &snaps_dir, &metadata) {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        let _ = std::fs::remove_dir_all(&tmp);
+                        return Err(e);
+                    }
+                };
                 return Ok(Some(Snapshot {
                     dir: final_dir,
                     metadata,
@@ -459,6 +460,18 @@ pub fn create_with_hook(
         }
     }
     bail!("save kept changing; no stable copy after {MAX_COPY_ATTEMPTS} attempts")
+}
+
+/// Write `metadata.json` into the verified temp folder, then rename the folder
+/// into place under a name no finalized snapshot uses.
+fn finalize(tmp: &Path, snaps_dir: &Path, metadata: &Metadata) -> Result<PathBuf> {
+    let json = serde_json::to_vec_pretty(metadata)?;
+    std::fs::write(tmp.join(METADATA_FILE), &json)?;
+
+    let final_dir = unique_final_dir(snaps_dir, metadata.created_utc, &metadata.files);
+    std::fs::rename(tmp, &final_dir)
+        .with_context(|| format!("finalizing snapshot {}", final_dir.display()))?;
+    Ok(final_dir)
 }
 
 /// One archive attempt. Reads + hashes sources, writes them into a deflate
@@ -904,6 +917,23 @@ mod tests {
             .flatten()
             .any(|d| d.file_name().to_string_lossy().starts_with(TMP_PREFIX));
         assert!(!leftover, "temp dir must not survive finalization");
+    }
+
+    #[test]
+    fn failed_finalize_leaves_no_temp_dir() {
+        let e = env();
+        let src = sources(&e, false);
+        let snaps_dir = snapshots_dir(&e.dest);
+        let result = create_with_hook(&e.dest, "111", &src, Reason::Manual, |_| {
+            // A directory where metadata.json should go makes its write fail.
+            for entry in std::fs::read_dir(&snaps_dir).unwrap().flatten() {
+                if entry.file_name().to_string_lossy().starts_with(TMP_PREFIX) {
+                    std::fs::create_dir(entry.path().join(METADATA_FILE)).unwrap();
+                }
+            }
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_dir(&snaps_dir).unwrap().count(), 0);
     }
 
     #[test]
