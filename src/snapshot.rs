@@ -672,16 +672,15 @@ mod tests {
     use super::*;
 
     struct Env {
-        _root: PathBuf,
+        _root: tempfile::TempDir,
         save_dir: PathBuf,
         dest: PathBuf,
     }
 
     fn env() -> Env {
-        let root =
-            std::env::temp_dir().join(format!("erbt-snap-{}-{}", std::process::id(), now_nanos()));
-        let save_dir = root.join("save");
-        let dest = root.join("dest");
+        let root = tempfile::tempdir().unwrap();
+        let save_dir = root.path().join("save");
+        let dest = root.path().join("dest");
         std::fs::create_dir_all(&save_dir).unwrap();
         std::fs::create_dir_all(&dest).unwrap();
         Env {

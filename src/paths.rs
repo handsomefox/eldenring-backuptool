@@ -236,14 +236,8 @@ mod tests {
     fn guard_resolves_symlinked_destination() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!(
-            "erbt-path-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
         let save = root.join("save");
         std::fs::create_dir_all(&save).unwrap();
         let disguised = root.join("disguised");

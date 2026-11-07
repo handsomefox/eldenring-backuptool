@@ -146,22 +146,10 @@ pub fn save(path: &Path, config: &Config) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn tmpdir() -> PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "erbt-cfg-{}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&p).unwrap();
-        p
-    }
-
     #[test]
     fn missing_file_gives_defaults() {
-        let dir = tmpdir();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let r = load(&dir.join("config.json"));
         assert_eq!(r.config, Config::default());
         assert!(r.recovered_from.is_none());
@@ -169,7 +157,8 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let dir = tmpdir();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let path = dir.join("config.json");
         let cfg = Config {
             selected_steamid: Some("76561198000000000".into()),
@@ -184,7 +173,8 @@ mod tests {
 
     #[test]
     fn failed_save_leaves_no_temp_file() {
-        let dir = tmpdir();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         // A directory in the way makes the final rename fail.
         let path = dir.join("config.json");
         std::fs::create_dir(&path).unwrap();
@@ -199,7 +189,8 @@ mod tests {
 
     #[test]
     fn malformed_preserved_and_defaults_returned() {
-        let dir = tmpdir();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let path = dir.join("config.json");
         std::fs::write(&path, b"{ not valid json").unwrap();
         let r = load(&path);
@@ -211,7 +202,8 @@ mod tests {
 
     #[test]
     fn log_level_leaves_a_malformed_file_for_load_to_recover() {
-        let dir = tmpdir();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let path = dir.join("config.json");
         std::fs::write(&path, br#"{"log_level":"debug"}"#).unwrap();
         assert_eq!(log_level(&path), "debug");
@@ -237,7 +229,8 @@ mod tests {
     #[test]
     fn unknown_fields_and_partial_ok() {
         // serde(default) tolerates missing fields; extra fields are ignored.
-        let dir = tmpdir();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let path = dir.join("config.json");
         std::fs::write(&path, br#"{"selected_steamid":"123","extra":true}"#).unwrap();
         let r = load(&path);
@@ -248,7 +241,8 @@ mod tests {
 
     #[test]
     fn update_settings_round_trip_and_default_when_absent() {
-        let dir = tmpdir();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let path = dir.join("config.json");
         // A config written before the updater existed keeps its other fields.
         std::fs::write(&path, br#"{"selected_steamid":"123","retention":7}"#).unwrap();

@@ -121,19 +121,6 @@ pub fn find(elden_root: &Path, steamid: &str) -> Option<SaveCandidate> {
 mod tests {
     use super::*;
 
-    fn root() -> PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "erbt-disc-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&p).unwrap();
-        p
-    }
-
     fn mkdir_save(root: &Path, name: &str, save: Option<&str>, bak: bool) {
         let d = root.join(name);
         std::fs::create_dir_all(&d).unwrap();
@@ -147,7 +134,8 @@ mod tests {
 
     #[test]
     fn single_valid_dir() {
-        let r = root();
+        let tmp = tempfile::tempdir().unwrap();
+        let r = tmp.path().to_path_buf();
         mkdir_save(&r, "76561198000000001", Some("ER0000.sl2"), true);
         let c = discover(&r);
         assert_eq!(c.len(), 1);
@@ -157,7 +145,8 @@ mod tests {
 
     #[test]
     fn ignores_junk() {
-        let r = root();
+        let tmp = tempfile::tempdir().unwrap();
+        let r = tmp.path().to_path_buf();
         mkdir_save(&r, "76561198000000001", Some("ER0000.sl2"), false);
         mkdir_save(&r, "Copies", Some("ER0000.sl2"), false); // non-numeric
         mkdir_save(&r, "76561198000000002", None, false); // numeric but no .sl2
@@ -170,7 +159,8 @@ mod tests {
 
     #[test]
     fn multiple_dirs() {
-        let r = root();
+        let tmp = tempfile::tempdir().unwrap();
+        let r = tmp.path().to_path_buf();
         mkdir_save(&r, "111", Some("ER0000.sl2"), false);
         mkdir_save(&r, "222", Some("ER0000.sl2"), false);
         let c = discover(&r);

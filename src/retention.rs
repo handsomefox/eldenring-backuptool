@@ -62,19 +62,6 @@ mod tests {
     use super::*;
     use crate::snapshot::create;
 
-    fn dest() -> PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "erbt-ret-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&p).unwrap();
-        p
-    }
-
     fn make_snapshots(dest: &Path, n: usize) {
         let src = dest.join("ER0000.sl2");
         for i in 0..n {
@@ -89,7 +76,8 @@ mod tests {
 
     #[test]
     fn keeps_newest_n() {
-        let d = dest();
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path().to_path_buf();
         make_snapshots(&d, 5);
         let removed = apply(&d, "111", 3);
         assert_eq!(removed.len(), 2);
@@ -104,7 +92,8 @@ mod tests {
 
     #[test]
     fn create_and_prune_prunes_only_after_a_new_snapshot() {
-        let d = dest();
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path().to_path_buf();
         make_snapshots(&d, 3);
         let src = d.join("ER0000.sl2");
         let sources = std::slice::from_ref(&src);
@@ -132,7 +121,8 @@ mod tests {
 
     #[test]
     fn under_limit_deletes_nothing() {
-        let d = dest();
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path().to_path_buf();
         make_snapshots(&d, 2);
         assert!(apply(&d, "111", 60).is_empty());
         assert_eq!(snapshot::list(&d, "111").len(), 2);
@@ -140,7 +130,8 @@ mod tests {
 
     #[test]
     fn ignores_temp_dirs() {
-        let d = dest();
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path().to_path_buf();
         make_snapshots(&d, 2);
         // A stray temp dir must be neither counted nor deleted by retention.
         let stray = snapshot::snapshots_dir(&d).join(".tmp-999-999");
@@ -152,7 +143,8 @@ mod tests {
 
     #[test]
     fn retention_never_removes_another_accounts_snapshots() {
-        let d = dest();
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path().to_path_buf();
         let src = d.join("ER0000.sl2");
         for i in 0..2 {
             std::fs::write(&src, format!("account-111-{i}")).unwrap();
