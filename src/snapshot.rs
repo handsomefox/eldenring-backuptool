@@ -489,8 +489,9 @@ fn finalize(tmp: &Path, snaps_dir: &Path, metadata: &Metadata) -> Result<PathBuf
 
 /// One archive attempt. Reads + hashes sources, writes them into a deflate
 /// `save.zip`, verifies the archive decompresses to the same bytes, then
-/// confirms the source did not change. Returns `Ok(Some((hashes, zip_size)))`
-/// on a stable copy, `Ok(None)` if the source changed mid-copy (caller retries).
+/// confirms the source did not change. Returns
+/// `Ok(Some((hashes, zip_size, zip_sha256)))` on a stable copy, `Ok(None)` if
+/// the source changed mid-copy (caller retries).
 fn try_archive(
     tmp: &Path,
     source_files: &[PathBuf],
