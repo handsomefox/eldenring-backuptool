@@ -40,22 +40,21 @@ where
     };
 
     // Resolve config + save + destination. Failure here must NOT stop the game.
-    let target = resolve_target();
-    if let Err(e) = &target {
-        tracing::warn!("backups disabled this session: {e:#}");
-    }
+    let target = resolve_target()
+        .inspect_err(|e| tracing::warn!("backups disabled this session: {e:#}"))
+        .ok();
 
     // Single-instance: if another monitor is already running we still launch
     // and track the game, but skip snapshotting to avoid duplicate work.
     let lock = SingleInstance::acquire(MUTEX_NAME);
-    let monitoring = lock.is_some() && target.is_ok();
     if lock.is_none() {
         tracing::info!("another monitor is active; launching without a second monitor");
     }
+    // Present only while this monitor holds the lock and has somewhere to back up.
+    let target = target.filter(|_| lock.is_some());
 
     // Best-effort pre-launch snapshot.
-    if monitoring
-        && let Ok(t) = &target
+    if let Some(t) = &target
         && t.config.pre_launch
     {
         backup(t, Reason::PreLaunch);
@@ -70,11 +69,8 @@ where
     };
     tracing::info!("game launcher started, waiting for {GAME_PROCESS}");
 
-    if !monitoring {
+    let Some(target) = target else {
         let _ = child.wait();
-        return 0;
-    }
-    let Ok(target) = target else {
         return 0;
     };
 
