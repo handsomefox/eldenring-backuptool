@@ -195,10 +195,6 @@ impl App {
         });
     }
 
-    fn reload_snapshots(&mut self) {
-        self.refresh();
-    }
-
     fn start_job(&mut self, kind: JobKind, work: impl FnOnce() -> LoadedView + Send + 'static) {
         if self.job.is_some() {
             return;
@@ -295,7 +291,7 @@ impl App {
             self.dest_edit = dest.display().to_string();
         }
         self.save_config();
-        self.reload_snapshots();
+        self.refresh();
         self.status = Some((false, format!("Protecting account {steamid}")));
     }
 
@@ -372,7 +368,7 @@ impl App {
         self.config.retention = retention;
         self.config.backup_dest = Some(dest);
         self.save_config();
-        self.reload_snapshots();
+        self.refresh();
         self.status = Some((false, "Settings saved.".into()));
     }
 }
