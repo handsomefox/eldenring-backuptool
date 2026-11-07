@@ -207,13 +207,3 @@ fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) -> bool {
     }
     cond()
 }
-
-/// Convenience for the GUI: is a monitor currently running?
-#[must_use]
-pub fn monitor_active() -> bool {
-    // If we can acquire the lock, none was held; release immediately.
-    match SingleInstance::acquire(MUTEX_NAME) {
-        Some(_guard) => false,
-        None => true,
-    }
-}
