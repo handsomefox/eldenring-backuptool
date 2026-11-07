@@ -414,11 +414,7 @@ impl eframe::App for App {
         });
 
         if let Some((is_err, msg)) = &self.status {
-            let color = if *is_err {
-                egui::Color32::from_rgb(200, 80, 80)
-            } else {
-                egui::Color32::from_rgb(80, 160, 100)
-            };
+            let color = if *is_err { RED } else { GREEN };
             let prefix = if *is_err { "Error" } else { "OK" };
             egui::Panel::bottom("status").show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -461,7 +457,7 @@ impl App {
     fn dashboard(&mut self, ui: &mut egui::Ui) {
         if let Some(bad) = &self.recovered {
             ui.colored_label(
-                egui::Color32::from_rgb(200, 140, 60),
+                AMBER,
                 format!(
                     "Your settings file was unreadable and was reset. The old file is kept at {}",
                     bad.display()
@@ -484,22 +480,16 @@ impl App {
             && self.config.backup_dest.is_some()
             && !self.snapshots.is_empty();
         let (color, text) = if protected {
-            (
-                egui::Color32::from_rgb(80, 160, 100),
-                "Protected — backups exist",
-            )
+            (GREEN, "Protected — backups exist")
         } else if self.config.selected_steamid.is_none() {
-            (
-                egui::Color32::from_rgb(200, 140, 60),
-                "Setup incomplete — choose an account below",
-            )
+            (AMBER, "Setup incomplete — choose an account below")
         } else if self.snapshots.is_empty() {
             (
-                egui::Color32::from_rgb(200, 140, 60),
+                AMBER,
                 "No backups yet — launch the game or press Back up now",
             )
         } else {
-            (egui::Color32::from_rgb(200, 140, 60), "Setup incomplete")
+            (AMBER, "Setup incomplete")
         };
         let game_running = self.game_running();
         ui.horizontal(|ui| {
@@ -767,6 +757,7 @@ impl App {
 
 const GREEN: egui::Color32 = egui::Color32::from_rgb(80, 160, 100);
 const AMBER: egui::Color32 = egui::Color32::from_rgb(200, 140, 60);
+const RED: egui::Color32 = egui::Color32::from_rgb(200, 80, 80);
 
 impl App {
     /// A small button in the header while a new version is out.
