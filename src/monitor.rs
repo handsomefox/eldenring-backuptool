@@ -110,14 +110,13 @@ fn resolve_target() -> anyhow::Result<Target> {
         .clone()
         .context("no backup destination configured")?;
     let elden_root = crate::paths::elden_ring_root()?;
-    let candidate = discovery::find(&elden_root, &steamid);
-    if candidate.is_none() {
+    let Some(candidate) = discovery::find(&elden_root, &steamid) else {
         bail!(
             "selected save {steamid} not found under {}",
             elden_root.display()
         );
-    }
-    crate::paths::validate_backup_dest(&candidate.expect("checked above").dir, &dest)?;
+    };
+    crate::paths::validate_backup_dest(&candidate.dir, &dest)?;
     Ok(Target {
         config,
         elden_root,
