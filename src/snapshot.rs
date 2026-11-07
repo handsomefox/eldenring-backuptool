@@ -890,6 +890,43 @@ mod tests {
     }
 
     #[test]
+    fn extraction_rejects_unsafe_entry_names() {
+        let e = env();
+        let src = sources(&e, false);
+        let snapshot = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        let zip_path = snapshot.dir.join(ARCHIVE_FILE);
+        let metadata_path = snapshot.dir.join(METADATA_FILE);
+        for name in ["../ER0000.sl2", "sub\\ER0000.sl2", ".."] {
+            // Rebuild the archive around one bad entry name and record its real
+            // hash and size, so the name is the only thing wrong with it.
+            let mut zip = zip::ZipWriter::new(File::create(&zip_path).unwrap());
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"save-v1").unwrap();
+            zip.finish().unwrap();
+            let mut metadata = snapshot.metadata.clone();
+            metadata.stored_bytes = std::fs::metadata(&zip_path).unwrap().len();
+            metadata.archive_sha256 = hash_file(&zip_path, ARCHIVE_FILE, MAX_ARCHIVE_BYTES)
+                .unwrap()
+                .sha256;
+            std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+            let out = snapshot.dir.join("out");
+            let error = extract(&snapshot.dir, &out).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("unsafe or duplicate archive entry"),
+                "{name}: {error:#}"
+            );
+            assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
+            assert!(!snapshot.dir.join("ER0000.sl2").exists());
+        }
+    }
+
+    #[test]
     fn source_changes_during_copy_then_stabilizes() {
         let e = env();
         let src = sources(&e, false);
