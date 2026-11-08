@@ -37,12 +37,8 @@ Unit tests live in `src/lib.rs` beside the code they cover. Use `tempfile` for f
 
 CI cannot reach the Steam launch option, the background monitor across a real game session, or a manual restore. Exercise those three by hand on Windows. The same goes for an app update: run a debug build with `APP_UPDATE_PRETEND_VERSION` set to an older version.
 
-## Bump CI tool pins by hand
+## CI and releases
 
-`scripts/install-ci-tool.sh` downloads cargo-audit, cargo-machete, actionlint, and zizmor from their release pages and checks each archive against a pinned SHA-256 before it extracts anything. Dependabot cannot bump these pins. To bump one, change its row in the script and take the new hash from the digest GitHub records for the asset:
+`.github/workflows/ci.yml` and `release.yml` only call the shared workflows in [handsomefox/app-workflows](https://github.com/handsomefox/app-workflows), pinned by commit. The checks, the release steps, and the CI tool pins live there, and its `AGENTS.md` covers changing them. Dependabot moves the pin when that repository releases.
 
-```sh
-gh release view <tag> -R <owner>/<repo> --json assets --jq '.assets[] | select(.name == "<asset>") | .digest'
-```
-
-CI runs actionlint, shellcheck, and `zizmor --persona pedantic` on every push. Run all three before you push a workflow change.
+CI runs actionlint and `zizmor --persona pedantic` on every push. Run both before you push a workflow change.

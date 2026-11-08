@@ -109,7 +109,7 @@ Each snapshot folder is named for its UTC timestamp and a short content hash. It
 
 The toolchain is pinned to Rust 1.98.1 in `rust-toolchain.toml`, and the package uses edition 2024. This repo cross-builds Windows binaries from Linux with [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin). On Windows, use the normal MSVC target.
 
-CI runs these three commands on Ubuntu and the last two on Windows, along with `cargo audit` and `cargo machete`:
+CI runs these three commands on Ubuntu and the last two on Windows, along with `cargo audit` and `cargo machete`. Both workflows come from [handsomefox/app-workflows](https://github.com/handsomefox/app-workflows), which the other apps share:
 
 ```sh
 cargo fmt --all -- --check
@@ -130,14 +130,6 @@ To build the Windows app:
 cargo xwin build --release --target x86_64-pc-windows-msvc   # from Linux
 cargo build --release                                        # on Windows
 ```
-
-To pack the same archive and `SHA256SUMS` a release publishes, under `dist/`:
-
-```sh
-bash scripts/package-windows.sh
-```
-
-The packaging script needs `cargo-xwin` 0.23.1, `jq`, `zip`, `unzip`, and GNU `sha256sum`. It checks the archive contents and the checksums before it reports success.
 
 The package has one library and one binary:
 
