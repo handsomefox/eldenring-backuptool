@@ -31,13 +31,13 @@ pub fn create_and_prune(
 
 /// Delete oldest snapshots beyond `keep`. Returns the directories removed.
 /// Retention is applied only after a new snapshot is finalized, so a live
-/// snapshot is never deleted before its replacement exists. Retention uses the
-/// same bounded structural listing as [`snapshot::list`] and does not hash
-/// archive payloads. A snapshot that cannot be removed is logged and left in
-/// place.
+/// snapshot is never deleted before its replacement exists. Only snapshots that
+/// pass [`snapshot::list_verified`] are counted or deleted, so a corrupt one
+/// neither takes one of the `keep` slots nor gets removed. A snapshot that
+/// cannot be removed is logged and left in place.
 pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Vec<Snapshot> {
     let keep = keep.max(1);
-    let snaps = snapshot::list(dest, steamid); // oldest → newest, temp dirs excluded
+    let snaps = snapshot::list_verified(dest, steamid); // oldest → newest, temp dirs excluded
     if snaps.len() <= keep {
         return Vec::new();
     }
@@ -117,6 +117,29 @@ mod tests {
         let remaining = snapshot::list(&d, "111");
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].dir, created.dir);
+    }
+
+    #[test]
+    fn corrupt_snapshot_is_neither_counted_nor_deleted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path().to_path_buf();
+        make_snapshots(&d, 3);
+        let snaps = snapshot::list(&d, "111");
+        // Flip one byte of the newest archive without changing its size.
+        let corrupt = snaps[2].dir.join(snapshot::ARCHIVE_FILE);
+        let mut bytes = std::fs::read(&corrupt).unwrap();
+        let middle = bytes.len() / 2;
+        bytes[middle] ^= 0xff;
+        std::fs::write(&corrupt, bytes).unwrap();
+
+        let removed = apply(&d, "111", 1);
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].dir, snaps[0].dir);
+        assert!(corrupt.exists(), "a corrupt snapshot is never deleted");
+        assert!(
+            snaps[1].dir.exists(),
+            "the corrupt snapshot does not take the one kept slot"
+        );
     }
 
     #[test]

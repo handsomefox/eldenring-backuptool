@@ -314,8 +314,9 @@ fn is_real_directory(entry: &std::fs::DirEntry) -> bool {
 ///
 /// Metadata is bounded and validated, and the recorded archive name, existence,
 /// and size must match. Archive payloads are deliberately not read here;
-/// callers that restore data must use [`extract`], while dedup uses [`newest`].
-/// Temp directories and reparse points are ignored.
+/// callers that restore data must use [`extract`], dedup uses [`newest`], and
+/// display and retention use [`list_verified`]. Temp directories and reparse
+/// points are ignored.
 #[must_use]
 pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     let mut out = Vec::new();
@@ -337,6 +338,26 @@ pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     }
     out.sort_by_key(|s| s.metadata.created_utc);
     out
+}
+
+/// List the snapshots for one Steam account whose complete archive hashes to
+/// the value in their metadata, sorted oldest → newest. A snapshot that fails
+/// is logged and left out.
+///
+/// This hashes every archive, so callers must run it off the UI thread.
+#[must_use]
+pub fn list_verified(dest: &Path, steamid: &str) -> Vec<Snapshot> {
+    list(dest, steamid)
+        .into_iter()
+        .filter_map(|snapshot| {
+            let dir = snapshot.dir.clone();
+            verify_snapshot_archive(snapshot)
+                .inspect_err(|e| {
+                    tracing::warn!("snapshot {} failed verification: {e:#}", dir.display());
+                })
+                .ok()
+        })
+        .collect()
 }
 
 /// Return the newest integrity-validated snapshot for one Steam account.
@@ -819,6 +840,25 @@ mod tests {
         reset_archive_hash_count();
         assert_eq!(list(&e.dest, "111").len(), 1);
         assert_eq!(archive_hash_count(), 0);
+    }
+
+    #[test]
+    fn verified_listing_leaves_out_a_same_size_corrupt_archive() {
+        let e = env();
+        let src = sources(&e, false);
+        let older = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        write(&src[0], b"newer");
+        let latest = create(&e.dest, "111", &src, Reason::Periodic)
+            .unwrap()
+            .unwrap();
+        tamper_archive_same_size(&latest);
+
+        let verified = list_verified(&e.dest, "111");
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].dir, older.dir);
+        assert_eq!(list(&e.dest, "111").len(), 2);
     }
 
     #[test]

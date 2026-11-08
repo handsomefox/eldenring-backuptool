@@ -118,7 +118,7 @@ struct LoadedView {
 fn load_view(config: &Config, root: Option<&std::path::Path>) -> LoadedView {
     let candidates = root.map_or_else(Vec::new, discovery::discover);
     let mut snapshots = match (&config.selected_steamid, &config.backup_dest) {
-        (Some(id), Some(dest)) => snapshot::list(dest, id),
+        (Some(id), Some(dest)) => snapshot::list_verified(dest, id),
         _ => Vec::new(),
     };
     snapshots.reverse();
