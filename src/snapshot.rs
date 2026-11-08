@@ -283,10 +283,12 @@ struct VerifiedArchive {
     sha256: String,
 }
 
-/// Archives that passed verification in this process, by path. A finalized
-/// snapshot is never rewritten, so an archive whose size and modification time
-/// are unchanged still holds the bytes that were hashed. Failures are never
-/// stored, so a repaired archive is hashed again.
+/// Archives that passed verification in this process, by path, for the
+/// dashboard's list only. A finalized snapshot is never rewritten, so an archive
+/// whose size and modification time are unchanged normally still holds the
+/// bytes that were hashed. Damage that keeps both is possible, so deduplication
+/// and retention never read this and always hash. Failures are never stored, so
+/// a repaired archive is hashed again.
 static VERIFIED_ARCHIVES: LazyLock<Mutex<HashMap<PathBuf, VerifiedArchive>>> =
     LazyLock::new(Mutex::default);
 
@@ -296,10 +298,18 @@ fn verified_archives() -> std::sync::MutexGuard<'static, HashMap<PathBuf, Verifi
         .unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Trust a snapshot's archive once its hash matches the metadata. An archive
-/// already verified in this process is trusted again without rehashing while
-/// its size, modification time, and recorded hash are unchanged.
-fn verify_snapshot_archive(snapshot: Snapshot) -> Result<Snapshot> {
+/// How far to trust an earlier verification of the same archive.
+#[derive(Clone, Copy)]
+enum Verify {
+    /// For display: an archive already verified in this process is trusted
+    /// again while its size, modification time, and recorded hash are unchanged.
+    Cached,
+    /// For deduplication and retention: hash the whole archive every time.
+    Rehash,
+}
+
+/// Trust a snapshot's archive once its hash matches the metadata.
+fn verify_snapshot_archive(snapshot: Snapshot, verify: Verify) -> Result<Snapshot> {
     let archive_path = snapshot.dir.join(ARCHIVE_FILE);
     // Read before hashing, so a write during the hash changes what is cached.
     let stamp = std::fs::metadata(&archive_path)
@@ -310,7 +320,8 @@ fn verify_snapshot_archive(snapshot: Snapshot) -> Result<Snapshot> {
             modified,
             sha256: snapshot.metadata.archive_sha256.clone(),
         });
-    if let Some(stamp) = &stamp
+    if matches!(verify, Verify::Cached)
+        && let Some(stamp) = &stamp
         && verified_archives().get(&archive_path) == Some(stamp)
     {
         return Ok(snapshot);
@@ -362,8 +373,8 @@ fn is_real_directory(entry: &std::fs::DirEntry) -> bool {
 ///
 /// Metadata is bounded and validated, and the recorded archive name, existence,
 /// and size must match. Archive payloads are deliberately not read here;
-/// callers that restore data must use [`extract`], dedup uses [`newest`], and
-/// display and retention use [`list_verified`]. Temp directories and reparse
+/// callers that restore data must use [`extract`], dedup uses [`newest`],
+/// retention uses [`list_rehashed`], and display uses [`list_verified`]. Temp directories and reparse
 /// points are ignored.
 #[must_use]
 pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
@@ -392,15 +403,27 @@ pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
 /// the value in their metadata, sorted oldest → newest. A snapshot that fails
 /// is logged and left out.
 ///
-/// This hashes every archive not yet verified in this process, so callers must
-/// run it off the UI thread.
+/// This is for display. It trusts an archive already verified in this process
+/// while its size and modification time are unchanged, and hashes the rest, so
+/// callers must run it off the UI thread.
 #[must_use]
 pub fn list_verified(dest: &Path, steamid: &str) -> Vec<Snapshot> {
+    list_checked(dest, steamid, Verify::Cached)
+}
+
+/// Like [`list_verified`], but hashes every archive, whatever was verified
+/// before. Retention uses it, so a damaged archive never takes a `keep` slot.
+#[must_use]
+pub fn list_rehashed(dest: &Path, steamid: &str) -> Vec<Snapshot> {
+    list_checked(dest, steamid, Verify::Rehash)
+}
+
+fn list_checked(dest: &Path, steamid: &str, verify: Verify) -> Vec<Snapshot> {
     list(dest, steamid)
         .into_iter()
         .filter_map(|snapshot| {
             let dir = snapshot.dir.clone();
-            verify_snapshot_archive(snapshot)
+            verify_snapshot_archive(snapshot, verify)
                 .inspect_err(|e| {
                     tracing::warn!("snapshot {} failed verification: {e:#}", dir.display());
                 })
@@ -418,7 +441,7 @@ pub fn list_verified(dest: &Path, steamid: &str) -> Vec<Snapshot> {
 pub fn newest(dest: &Path, steamid: &str) -> Option<Snapshot> {
     let mut snapshots = list(dest, steamid);
     while let Some(snapshot) = snapshots.pop() {
-        if let Ok(snapshot) = verify_snapshot_archive(snapshot) {
+        if let Ok(snapshot) = verify_snapshot_archive(snapshot, Verify::Rehash) {
             return Some(snapshot);
         }
     }
@@ -803,6 +826,44 @@ mod tests {
         std::fs::write(path, bytes).unwrap();
     }
 
+    /// Damage the archive in place and put its modification time back, so its
+    /// size and modification time both match what the cache recorded.
+    fn tamper_archive_keeping_stamp(snapshot: &Snapshot) {
+        let path = snapshot.dir.join(ARCHIVE_FILE);
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        tamper_archive_same_size(snapshot);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+    }
+
+    #[test]
+    fn dedup_and_retention_rehash_what_the_dashboard_cached() {
+        let e = env();
+        let src = sources(&e, false);
+        let older = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        write(&src[0], b"newer");
+        let latest = create(&e.dest, "111", &src, Reason::Periodic)
+            .unwrap()
+            .unwrap();
+        assert_eq!(list_verified(&e.dest, "111").len(), 2);
+        tamper_archive_keeping_stamp(&latest);
+
+        // The dashboard may still show it from the cache, but nothing that
+        // decides what to keep or whether to back up may trust that.
+        assert_eq!(newest(&e.dest, "111").unwrap().dir, older.dir);
+        let kept: Vec<_> = list_rehashed(&e.dest, "111")
+            .into_iter()
+            .map(|s| s.dir)
+            .collect();
+        assert_eq!(kept, vec![older.dir]);
+    }
+
     #[test]
     fn first_snapshot_with_bak() {
         let e = env();
@@ -1020,8 +1081,8 @@ mod tests {
 
         reset_archive_hash_count();
         assert_eq!(newest(&e.dest, "111").unwrap().dir, older.dir);
-        // The second create already verified `older`, so only `latest` is hashed.
-        assert_eq!(archive_hash_count(), 1);
+        // Deduplication trusts no earlier verification, so both are hashed.
+        assert_eq!(archive_hash_count(), 2);
     }
 
     #[test]

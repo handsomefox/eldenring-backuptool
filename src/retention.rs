@@ -32,12 +32,12 @@ pub fn create_and_prune(
 /// Delete oldest snapshots beyond `keep`. Returns the directories removed.
 /// Retention is applied only after a new snapshot is finalized, so a live
 /// snapshot is never deleted before its replacement exists. Only snapshots that
-/// pass [`snapshot::list_verified`] are counted or deleted, so a corrupt one
+/// pass [`snapshot::list_rehashed`] are counted or deleted, so a corrupt one
 /// neither takes one of the `keep` slots nor gets removed. A snapshot that
 /// cannot be removed is logged and left in place.
 pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Vec<Snapshot> {
     let keep = keep.max(1);
-    let snaps = snapshot::list_verified(dest, steamid); // oldest → newest, temp dirs excluded
+    let snaps = snapshot::list_rehashed(dest, steamid); // oldest → newest, temp dirs excluded
     if snaps.len() <= keep {
         return Vec::new();
     }
