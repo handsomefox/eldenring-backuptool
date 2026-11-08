@@ -2,6 +2,16 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.2.3
+
+- Check each snapshot against its recorded hash before the **Backups** tab lists it and before retention counts it. A damaged snapshot is left off the list, does not take one of the snapshots you keep, is never deleted, and is named in the log. Each snapshot is checked once per session, and again if its file changes.
+- Show the notice that an unreadable settings file was reset. The reset happened, but the notice never appeared.
+- Remove the temporary files that a failed backup or a failed settings save left behind. A failed backup could leave a full copy of the save in the backup folder.
+- Log each snapshot that retention fails to remove.
+- Say in **Settings** that intervals below 60 seconds are rejected.
+- Refuse an app update whose checksum on GitHub cannot be read, instead of skipping that check.
+- Retry putting the current version back when installing an app update fails.
+
 ## 1.2.2
 
 - New installs check for a new version each time the Save Guard window opens. Existing installs keep their setting. To change it, open the **Help** tab > **App updates**.
