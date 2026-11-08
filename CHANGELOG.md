@@ -2,6 +2,11 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.2.4
+
+- Get the self-updater from its own repository, [handsomefox/app-update](https://github.com/handsomefox/app-update), instead of a copy
+  inside this app. Checking for, downloading, and installing an update work as before.
+
 ## 1.2.3
 
 - Check each snapshot against its recorded hash before the **Backups** tab lists it and before retention counts it. A damaged snapshot is left off the list, does not take one of the snapshots you keep, is never deleted, and is named in the log. Each snapshot is checked once per session, and again if its file changes.
