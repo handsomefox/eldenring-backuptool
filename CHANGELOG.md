@@ -2,6 +2,12 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.2.6
+
+- Hash every backup again before deciding whether a new one is a duplicate, and which old ones to
+  delete. A damaged backup whose size and date had not changed could be trusted from earlier in
+  the session, stop a new backup, and keep its slot while a good older backup was deleted.
+
 ## 1.2.5
 
 - **Check for updates**, which replaces **App updates…**, checks GitHub right away as it opens the
