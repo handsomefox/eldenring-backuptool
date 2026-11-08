@@ -7,11 +7,12 @@
 //! finalizes a partial copy, and dedups on file *content*, not modification
 //! time. Hashes recorded in metadata are of the **original** save bytes.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{LazyLock, Mutex, PoisonError};
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
@@ -274,7 +275,58 @@ fn load_snapshot_metadata(dir: &Path, expected_steamid: Option<&str>) -> Result<
     })
 }
 
+/// What a `save.zip` looked like when it last hashed to its metadata.
+#[derive(PartialEq, Eq)]
+struct VerifiedArchive {
+    size: u64,
+    modified: SystemTime,
+    sha256: String,
+}
+
+/// Archives that passed verification in this process, by path. A finalized
+/// snapshot is never rewritten, so an archive whose size and modification time
+/// are unchanged still holds the bytes that were hashed. Failures are never
+/// stored, so a repaired archive is hashed again.
+static VERIFIED_ARCHIVES: LazyLock<Mutex<HashMap<PathBuf, VerifiedArchive>>> =
+    LazyLock::new(Mutex::default);
+
+fn verified_archives() -> std::sync::MutexGuard<'static, HashMap<PathBuf, VerifiedArchive>> {
+    VERIFIED_ARCHIVES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Trust a snapshot's archive once its hash matches the metadata. An archive
+/// already verified in this process is trusted again without rehashing while
+/// its size, modification time, and recorded hash are unchanged.
 fn verify_snapshot_archive(snapshot: Snapshot) -> Result<Snapshot> {
+    let archive_path = snapshot.dir.join(ARCHIVE_FILE);
+    // Read before hashing, so a write during the hash changes what is cached.
+    let stamp = std::fs::metadata(&archive_path)
+        .ok()
+        .and_then(|m| Some((m.len(), m.modified().ok()?)))
+        .map(|(size, modified)| VerifiedArchive {
+            size,
+            modified,
+            sha256: snapshot.metadata.archive_sha256.clone(),
+        });
+    if let Some(stamp) = &stamp
+        && verified_archives().get(&archive_path) == Some(stamp)
+    {
+        return Ok(snapshot);
+    }
+    if let Err(e) = hash_snapshot_archive(&snapshot) {
+        verified_archives().remove(&archive_path);
+        return Err(e);
+    }
+    if let Some(stamp) = stamp {
+        verified_archives().insert(archive_path, stamp);
+    }
+    Ok(snapshot)
+}
+
+/// Hash the complete archive and compare it with the metadata, always.
+fn hash_snapshot_archive(snapshot: &Snapshot) -> Result<()> {
     #[cfg(test)]
     ARCHIVE_HASH_COUNT.with(|count| count.set(count.get() + 1));
     let archive_path = snapshot.dir.join(ARCHIVE_FILE);
@@ -282,11 +334,7 @@ fn verify_snapshot_archive(snapshot: Snapshot) -> Result<Snapshot> {
     if actual.sha256 != snapshot.metadata.archive_sha256 {
         bail!("snapshot archive hash does not match metadata");
     }
-    Ok(snapshot)
-}
-
-fn load_verified_snapshot(dir: &Path, expected_steamid: Option<&str>) -> Result<Snapshot> {
-    verify_snapshot_archive(load_snapshot_metadata(dir, expected_steamid)?)
+    Ok(())
 }
 
 fn is_real_directory(entry: &std::fs::DirEntry) -> bool {
@@ -344,7 +392,8 @@ pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
 /// the value in their metadata, sorted oldest → newest. A snapshot that fails
 /// is logged and left out.
 ///
-/// This hashes every archive, so callers must run it off the UI thread.
+/// This hashes every archive not yet verified in this process, so callers must
+/// run it off the UI thread.
 #[must_use]
 pub fn list_verified(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     list(dest, steamid)
@@ -376,7 +425,7 @@ pub fn newest(dest: &Path, steamid: &str) -> Option<Snapshot> {
     None
 }
 
-fn system_time_to_utc(t: std::time::SystemTime) -> Option<DateTime<Utc>> {
+fn system_time_to_utc(t: SystemTime) -> Option<DateTime<Utc>> {
     DateTime::<Utc>::from_timestamp(
         t.duration_since(std::time::UNIX_EPOCH)
             .ok()?
@@ -624,7 +673,9 @@ fn expected_entry<'a>(
 ///
 /// Returns an error if validation, extraction, or any filesystem operation fails.
 pub fn extract(snapshot_dir: &Path, out_dir: &Path) -> Result<()> {
-    let snapshot = load_verified_snapshot(snapshot_dir, None)?;
+    // Restore always rehashes rather than trusting the verification cache.
+    let snapshot = load_snapshot_metadata(snapshot_dir, None)?;
+    hash_snapshot_archive(&snapshot)?;
     let file = File::open(snapshot_dir.join(ARCHIVE_FILE))?;
     let mut archive = zip::ZipArchive::new(file)?;
     std::fs::create_dir_all(out_dir)?;
@@ -684,7 +735,7 @@ fn unique_final_dir(snaps_dir: &Path, created: DateTime<Utc>, files: &[FileHash]
 }
 
 fn now_nanos() -> u128 {
-    std::time::SystemTime::now()
+    SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos())
 }
@@ -861,6 +912,82 @@ mod tests {
         assert_eq!(list(&e.dest, "111").len(), 2);
     }
 
+    fn set_archive_mtime(snapshot: &Snapshot, modified: SystemTime) {
+        File::options()
+            .write(true)
+            .open(snapshot.dir.join(ARCHIVE_FILE))
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+    }
+
+    fn archive_mtime(snapshot: &Snapshot) -> SystemTime {
+        std::fs::metadata(snapshot.dir.join(ARCHIVE_FILE))
+            .unwrap()
+            .modified()
+            .unwrap()
+    }
+
+    #[test]
+    fn same_size_corruption_that_moves_the_mtime_fails_after_caching() {
+        let e = env();
+        let src = sources(&e, false);
+        let snapshot = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        assert_eq!(list_verified(&e.dest, "111").len(), 1);
+
+        let before = archive_mtime(&snapshot);
+        tamper_archive_same_size(&snapshot);
+        set_archive_mtime(&snapshot, before + Duration::from_secs(1));
+        assert!(list_verified(&e.dest, "111").is_empty());
+        // Failures are not cached: the next listing hashes it again.
+        reset_archive_hash_count();
+        assert!(list_verified(&e.dest, "111").is_empty());
+        assert_eq!(archive_hash_count(), 1);
+    }
+
+    #[test]
+    fn cached_verification_is_dropped_when_size_or_mtime_changes() {
+        let e = env();
+        let src = sources(&e, false);
+        let snapshot = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        assert_eq!(list_verified(&e.dest, "111").len(), 1);
+
+        reset_archive_hash_count();
+        assert_eq!(list_verified(&e.dest, "111").len(), 1);
+        assert_eq!(
+            archive_hash_count(),
+            0,
+            "unchanged archive is trusted from the cache"
+        );
+
+        let before = archive_mtime(&snapshot);
+        set_archive_mtime(&snapshot, before + Duration::from_secs(1));
+        assert_eq!(list_verified(&e.dest, "111").len(), 1);
+        assert_eq!(archive_hash_count(), 1, "a new mtime forces a rehash");
+
+        // A different size is not trusted either, even with the cached mtime.
+        let moved = archive_mtime(&snapshot);
+        let path = snapshot.dir.join(ARCHIVE_FILE);
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.push(0);
+        std::fs::write(&path, bytes).unwrap();
+        set_archive_mtime(&snapshot, moved);
+        let mut metadata = snapshot.metadata.clone();
+        metadata.stored_bytes += 1;
+        std::fs::write(
+            snapshot.dir.join(METADATA_FILE),
+            serde_json::to_vec(&metadata).unwrap(),
+        )
+        .unwrap();
+        reset_archive_hash_count();
+        assert!(list_verified(&e.dest, "111").is_empty());
+        assert_eq!(archive_hash_count(), 1, "a new size forces a rehash");
+    }
+
     #[test]
     fn newest_hashes_only_the_first_valid_candidate() {
         let e = env();
@@ -893,7 +1020,8 @@ mod tests {
 
         reset_archive_hash_count();
         assert_eq!(newest(&e.dest, "111").unwrap().dir, older.dir);
-        assert_eq!(archive_hash_count(), 2);
+        // The second create already verified `older`, so only `latest` is hashed.
+        assert_eq!(archive_hash_count(), 1);
     }
 
     #[test]
