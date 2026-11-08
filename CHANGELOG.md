@@ -2,6 +2,18 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.2.5
+
+- **Check for updates**, which replaces **App updates…**, checks GitHub right away as it opens the
+  update window. The old button only opened the window.
+- Write the log to one file per day, `eldenring-backuptool-<date>.log`, and keep the last seven,
+  in place of a single `app.log`. The files stay in the same `logs` folder, and a crash is logged
+  with its backtrace.
+- Ask Windows where `%APPDATA%` and `%LOCALAPPDATA%` are, and fall back to the environment
+  variables only when it cannot answer.
+- Get the self-updater, the update window, logging, and the folder lookups from [handsomefox/app-internals](https://github.com/handsomefox/app-internals),
+  which all five apps share, instead of a copy inside this app.
+
 ## 1.2.4
 
 - Get the self-updater from its own repository, [handsomefox/app-update](https://github.com/handsomefox/app-update), instead of a copy
