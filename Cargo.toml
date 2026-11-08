@@ -21,7 +21,7 @@ required-features = ["gui"]
 default = ["gui"]
 # GUI + dialogs live behind this feature so `cargo test --lib --no-default-features`
 # builds the portable core on Linux without pulling eframe/egui/rfd (and X11).
-gui = ["dep:eframe", "dep:egui", "dep:rfd"]
+gui = ["dep:eframe", "dep:egui", "dep:rfd", "dep:app-update-ui", "dep:app-diagnostics"]
 
 [dependencies]
 serde = { version = "=1.0.229", features = ["derive"] }
@@ -31,10 +31,13 @@ zip = { version = "=9.2.0", default-features = false, features = ["deflate"] }
 chrono = { version = "=0.4.45", features = ["serde"] }
 anyhow = "=1.0.104"
 tracing = "=0.1.44"
-tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
 directories = "=6.0.0"
-# The self-updater, from its own repository. `lib.rs` re-exports it as `update`.
-app-update = { git = "https://github.com/handsomefox/app-update", tag = "v0.1.0", version = "=0.1.0" }
+# The crates the apps share, from handsomefox/app-internals. `lib.rs` re-exports
+# app-update as `update`. app-update-ui and app-diagnostics are GUI-only.
+app-update = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.0", version = "=0.2.0" }
+app-folders = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.0", version = "=0.2.0" }
+app-update-ui = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.0", version = "=0.2.0", optional = true }
+app-diagnostics = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.0", version = "=0.2.0", optional = true }
 # GUI + dialogs: optional, enabled by the `gui` feature (see [features]).
 eframe = { version = "=0.37.0", default-features = false, features = ["clipboard", "default_fonts", "glow", "x11"], optional = true }
 egui = { version = "=0.37.0", features = ["monochrome_emoji_fonts"], optional = true }
@@ -47,8 +50,6 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_Storage_FileSystem",
     "Win32_Security",
-    "Win32_UI_Shell",
-    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]

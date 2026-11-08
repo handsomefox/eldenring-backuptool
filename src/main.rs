@@ -31,12 +31,13 @@ fn main() -> ExitCode {
     }
 }
 
+/// Logs both modes to daily files in the logs folder, at the level the
+/// settings file names unless `RUST_LOG` is set.
 fn init_logging() {
     let level = save_guard::paths::config_path().map_or_else(
         |_| "info".to_string(),
         |p| save_guard::config::log_level(&p),
     );
-    if let Ok(dir) = save_guard::paths::log_dir() {
-        let _ = save_guard::logging::init(&dir, &level);
-    }
+    let dir = save_guard::paths::log_dir().ok();
+    app_diagnostics::init(dir.as_deref(), "eldenring-backuptool", &level);
 }

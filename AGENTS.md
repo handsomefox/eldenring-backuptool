@@ -6,10 +6,10 @@ The [README](README.md) covers what Save Guard does and how to build it. [SAFETY
 
 One library and one binary, split so the core stays testable without a GUI:
 
-- `src/lib.rs` is the portable core: `config`, `discovery`, `snapshot`, `retention`, `launch`, `paths`, `monitor`, `platform`, and `logging`. The unit tests live here.
+- `src/lib.rs` is the portable core: `config`, `discovery`, `snapshot`, `retention`, `launch`, `paths`, `monitor`, and `platform`. The unit tests live here.
 - `src/gui.rs` is the egui dashboard, behind the default `gui` feature.
 - `src/main.rs` dispatches between the GUI and `--monitor`.
-- `update` updates the app itself from its GitHub releases. `src/lib.rs` re-exports it from the `app-update` crate, which lives in its own repository, [handsomefox/app-update](https://github.com/handsomefox/app-update), pinned to a tag. That repository's `AGENTS.md` covers changing and releasing it. Only the dashboard creates an updater; `--monitor` never contacts GitHub.
+- The shared crates come from [handsomefox/app-internals](https://github.com/handsomefox/app-internals), pinned to a tag. `src/lib.rs` re-exports `app-update` as `update`, which updates the app from its GitHub releases. Only the dashboard creates an updater; `--monitor` never contacts GitHub. `app-folders` resolves `%APPDATA%` and `%LOCALAPPDATA%` and opens folders. `app-update-ui` draws the update dialog's content and `app-diagnostics` writes the daily log files; both are behind the `gui` feature. That repository's `AGENTS.md` covers changing them.
 
 Put new logic in the core rather than in `gui.rs`, so it can be tested on Linux. A function that reaches for egui types is in the wrong file.
 

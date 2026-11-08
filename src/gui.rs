@@ -15,10 +15,11 @@ use save_guard::paths;
 use save_guard::platform;
 use save_guard::retention;
 use save_guard::snapshot::{self, Reason, Snapshot};
-use save_guard::update::{self, CheckPeriod, NoteBlock, Updater};
+use save_guard::update::{self, Updater};
 
 /// Where Save Guard's releases are published.
 const APP_INFO: update::AppInfo = update::AppInfo {
+    name: "Save Guard",
     owner: "handsomefox",
     repo: "eldenring-backuptool",
     bin: "eldenring-backuptool",
@@ -86,14 +87,6 @@ struct App {
     game_check: Option<(Instant, bool)>,
     /// The Steam launch option for this executable, shown on the Help tab.
     launch_option: String,
-}
-
-/// What the user chose in the update window this frame.
-enum UpdateAction {
-    Download,
-    Restart,
-    Skip,
-    Later,
 }
 
 /// Background work in flight. Only one job runs at a time.
@@ -617,7 +610,7 @@ impl App {
             if let Some(dest) = &self.config.backup_dest
                 && ui.button("📂 Open backup folder").clicked()
             {
-                platform::open_folder(&snapshot::snapshots_dir(dest));
+                open_folder(&snapshot::snapshots_dir(dest));
             }
         });
         ui.separator();
@@ -645,7 +638,7 @@ impl App {
                         ui.label(human_size(s.stored_size()));
                         ui.label(s.metadata.reason.label());
                         if ui.button("Open").clicked() {
-                            platform::open_folder(&s.dir);
+                            open_folder(&s.dir);
                         }
                         ui.end_row();
                     }
@@ -697,7 +690,7 @@ impl App {
             if ui.button("Open logs folder").clicked()
                 && let Ok(dir) = paths::log_dir()
             {
-                platform::open_folder(&dir);
+                open_folder(&dir);
             }
         });
         ui.label(format!(
@@ -731,9 +724,9 @@ impl App {
         ui.label("4. Reopen Steam. If it reports a Steam Cloud conflict, choose the LOCAL copy — not the newer cloud one.");
         if ui.button("📂 Open my save folder").clicked() {
             if let Some(c) = self.selected_candidate() {
-                platform::open_folder(&c.dir);
+                open_folder(&c.dir);
             } else if let Some(root) = &self.elden_root {
-                platform::open_folder(root);
+                open_folder(root);
             }
         }
 
@@ -744,10 +737,13 @@ impl App {
                 save_guard::APP_VERSION
             ));
             if ui
-                .button("App updates…")
-                .on_hover_text("Check for a new version and choose how often to check")
+                .button("Check for updates")
+                .on_hover_text("Check GitHub for a new version now, and choose how often to check")
                 .clicked()
             {
+                // The label promises a check, so start one as the window
+                // opens. The updater leaves a running check or download alone.
+                self.updater.check_now();
                 self.update_window_open = true;
             }
         });
@@ -759,23 +755,32 @@ const GREEN: egui::Color32 = egui::Color32::from_rgb(80, 160, 100);
 const AMBER: egui::Color32 = egui::Color32::from_rgb(200, 140, 60);
 const RED: egui::Color32 = egui::Color32::from_rgb(200, 80, 80);
 
+/// Save Guard's colours and egui's own text styles, for the shared update
+/// dialog.
+struct UpdateLook;
+
+impl app_update_ui::Look for UpdateLook {
+    fn success(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        GREEN
+    }
+
+    fn warning(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        AMBER
+    }
+}
+
 impl App {
     /// A small button in the header while a new version is out.
     fn update_chip(&mut self, ui: &mut egui::Ui) {
-        let Some(release) = self.updater.notification(&self.config.app_updates) else {
+        let Some(text) = app_update_ui::chip_text(&self.updater, &self.config.app_updates) else {
             return;
-        };
-        let text = if self.updater.staged().is_some() {
-            format!("Restart for v{}", release.version)
-        } else {
-            format!("Update v{} available", release.version)
         };
         let chip = egui::Button::new(egui::RichText::new(text).color(egui::Color32::WHITE))
             .fill(GREEN.gamma_multiply(0.8))
             .corner_radius(egui::CornerRadius::same(10));
         if ui
             .add(chip)
-            .on_hover_text("A new version of Save Guard is out. Click to see what changed.")
+            .on_hover_text(app_update_ui::chip_hover_text(&self.updater))
             .clicked()
         {
             self.update_window_open = true;
@@ -784,223 +789,47 @@ impl App {
 
     fn update_window(&mut self, ctx: &egui::Context) {
         let mut open = true;
-        let mut period = self.config.app_updates.period;
-        let mut check = false;
-        let mut action = None;
+        let mut chosen = None;
         // A restart closes the window, so it waits for a backup or a reload.
-        let busy = self.job.is_some();
+        let busy = self
+            .job
+            .is_some()
+            .then_some("Wait for the backup in progress to finish");
+        let before = self.config.app_updates.clone();
         let updater = &self.updater;
-        let settings = &self.config.app_updates;
-        egui::Window::new("App updates")
+        let settings = &mut self.config.app_updates;
+        egui::Window::new(app_update_ui::TITLE)
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
-            .default_width(480.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(ctx.content_rect().height() - 220.0)
-                    .show(ui, |ui| {
-                        update_status(ui, updater, settings);
-                    });
-                ui.separator();
-                update_schedule(ui, updater, settings, &mut period, &mut check);
-                action = update_actions(ui, updater, busy);
+                ui.set_width(480.0);
+                chosen = app_update_ui::body(ui, &UpdateLook, updater, settings);
+                ui.weak("The background monitor that Steam starts never checks.");
+                chosen = app_update_ui::actions(ui, &UpdateLook, updater, busy).or(chosen);
             });
-        if period != self.config.app_updates.period {
-            self.config.app_updates.period = period;
+        if let Some(action) = chosen
+            && app_update_ui::apply(action, ctx, &mut self.updater, &mut self.config.app_updates)
+        {
+            open = false;
+        }
+        // The period and a skipped version are saved as soon as they change.
+        if self.config.app_updates.period != before.period
+            || self.config.app_updates.skipped != before.skipped
+        {
             self.save_update_settings();
-        }
-        if check {
-            self.updater.check_now();
-        }
-        match action {
-            Some(UpdateAction::Download) => self.updater.download(),
-            Some(UpdateAction::Restart) => {
-                if self.updater.install_and_restart().is_ok() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            }
-            Some(UpdateAction::Skip) => {
-                self.updater.skip(&mut self.config.app_updates);
-                self.save_update_settings();
-                open = false;
-            }
-            Some(UpdateAction::Later) => {
-                self.updater.dismiss();
-                open = false;
-            }
-            None => {}
         }
         self.update_window_open = open;
     }
 }
 
-/// Where the running version stands, and the notes of every newer release.
-fn update_status(ui: &mut egui::Ui, updater: &Updater, settings: &update::Settings) {
-    let current = updater.current().map_or_else(
-        || APP_INFO.version.to_owned(),
-        |version| version.to_string(),
-    );
-    if let Some(found) = updater.update() {
-        let latest = found.latest();
-        ui.heading(format!("Version {} is available", latest.version));
-        let released = if latest.date.is_empty() {
-            String::new()
-        } else {
-            format!(" It was released on {}.", latest.date)
-        };
-        ui.label(format!("You have version {current}.{released}"));
-        if updater.staged() == Some(latest.version) {
-            ui.colored_label(
-                GREEN,
-                "Downloaded and verified. Restart Save Guard to finish.",
-            );
-        } else if settings.skipped.as_deref() == Some(latest.version.to_string().as_str()) {
-            ui.weak("You skipped this version, so the header does not point it out.");
-        }
-        if !updater.can_install() {
-            ui.label(
-                "This release has no build that Save Guard can install by itself. \
-                 Download it from the release page instead.",
-            );
-            ui.hyperlink_to("Release page", &latest.page_url);
-        }
-        ui.add_space(8.0);
-        ui.strong("What's new");
-        for release in found.releases() {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.strong(release.version.to_string());
-                if !release.date.is_empty() {
-                    ui.weak(&release.date);
-                }
-            });
-            release_notes(ui, &release.notes);
-        }
-        ui.add_space(4.0);
-        ui.hyperlink_to("All releases", APP_INFO.releases_page());
-    } else if updater.is_checking() {
-        ui.horizontal(|ui| {
-            ui.spinner();
-            ui.label("Checking GitHub for a new version…");
-        });
-    } else if updater.is_up_to_date() {
-        ui.colored_label(GREEN, format!("Version {current} is the latest version."));
-    } else {
-        ui.label(format!("You have version {current}."));
+/// Opens a folder in the system file manager. Best-effort: a failure is only
+/// logged.
+fn open_folder(path: &std::path::Path) {
+    if let Err(error) = app_folders::open(path) {
+        tracing::warn!(path = %path.display(), %error, "could not open the folder");
     }
-    if let Some(error) = updater.error() {
-        ui.add_space(6.0);
-        ui.colored_label(AMBER, error);
-    }
-}
-
-fn update_schedule(
-    ui: &mut egui::Ui,
-    updater: &Updater,
-    settings: &update::Settings,
-    period: &mut CheckPeriod,
-    check: &mut bool,
-) {
-    ui.horizontal(|ui| {
-        ui.label("Check for new versions");
-        egui::ComboBox::from_id_salt("app-update-period")
-            .selected_text(period.label())
-            .show_ui(ui, |ui| {
-                for option in CheckPeriod::ALL {
-                    ui.selectable_value(period, option, option.label());
-                }
-            });
-        *check = ui
-            .add_enabled(!updater.is_busy(), egui::Button::new("⟳ Check now"))
-            .clicked();
-    });
-    let last = settings.last_check.map_or_else(
-        || "Never checked".to_owned(),
-        |then| format!("Last checked {}", update::describe_age(then, update::now())),
-    );
-    ui.weak(format!(
-        "{last}. A check asks GitHub for Save Guard's releases and sends nothing else. \
-         The background monitor that Steam starts never checks."
-    ));
-}
-
-fn release_notes(ui: &mut egui::Ui, markdown: &str) {
-    let blocks = update::parse_notes(markdown);
-    if blocks.is_empty() {
-        ui.weak("No notes for this release.");
-    }
-    for block in blocks {
-        match block {
-            NoteBlock::Heading(text) => {
-                ui.strong(text);
-            }
-            NoteBlock::Bullet(text) => {
-                ui.horizontal_top(|ui| {
-                    ui.label("•");
-                    ui.add(egui::Label::new(text).wrap());
-                });
-            }
-            NoteBlock::Paragraph(text) => {
-                ui.add(egui::Label::new(text).wrap());
-            }
-        }
-    }
-}
-
-fn update_actions(ui: &mut egui::Ui, updater: &Updater, busy: bool) -> Option<UpdateAction> {
-    let found = updater.update()?;
-    ui.add_space(6.0);
-    if let Some((received, total)) = updater.progress() {
-        let percent = total
-            .filter(|total| *total > 0)
-            .map_or(0, |total| received.saturating_mul(100) / total)
-            .min(100);
-        let fraction = f32::from(u8::try_from(percent).unwrap_or(100)) / 100.0;
-        ui.add(egui::ProgressBar::new(fraction).text(format!(
-            "Downloading {}… {percent}%",
-            found.latest().version
-        )));
-        return None;
-    }
-    let mut action = None;
-    ui.horizontal(|ui| {
-        if updater.staged().is_some() {
-            if ui
-                .add_enabled(!busy, egui::Button::new("Restart to update"))
-                .on_hover_text("Close Save Guard and open the new version")
-                .on_disabled_hover_text("Wait for the backup in progress to finish")
-                .clicked()
-            {
-                action = Some(UpdateAction::Restart);
-            }
-        } else if updater.can_install()
-            && ui
-                .add_enabled(!updater.is_busy(), egui::Button::new("Download update"))
-                .on_hover_text(
-                    "Download the new version and check it against its published SHA-256",
-                )
-                .clicked()
-        {
-            action = Some(UpdateAction::Download);
-        }
-        if ui
-            .button("Skip this version")
-            .on_hover_text("Stop pointing out this version. A newer one shows up again.")
-            .clicked()
-        {
-            action = Some(UpdateAction::Skip);
-        }
-        if ui
-            .button("Not now")
-            .on_hover_text("Hide the reminder until Save Guard starts again")
-            .clicked()
-        {
-            action = Some(UpdateAction::Later);
-        }
-    });
-    action
 }
 
 fn dir_name(p: &std::path::Path) -> String {

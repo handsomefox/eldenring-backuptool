@@ -1,6 +1,6 @@
 //! Path resolution and the safety guards that keep backups out of the save
-//! tree (and vice-versa). Known folders come from environment variables
-//! (reliable, inherited by the Steam-launched monitor); Documents uses the
+//! tree (and vice-versa). Known folders come from `app-folders`, which asks
+//! the Windows shell and falls back to the environment; Documents uses the
 //! `directories` crate for OneDrive-redirect handling.
 
 use std::path::{Component, Path, PathBuf};
@@ -9,49 +9,25 @@ use anyhow::{Context, Result, bail};
 
 use crate::APP_NAME;
 
-fn env_dir(var: &str) -> Result<PathBuf> {
-    let v =
-        std::env::var_os(var).with_context(|| format!("environment variable {var} is not set"))?;
-    if v.is_empty() {
-        bail!("environment variable {var} is empty");
-    }
-    Ok(PathBuf::from(v))
-}
-
-/// `%APPDATA%` (Roaming).
-///
-/// # Errors
-///
-/// Returns an error if the environment variable is missing or empty.
-pub fn appdata_roaming() -> Result<PathBuf> {
-    env_dir("APPDATA")
-}
-
-/// `%LOCALAPPDATA%`.
-///
-/// # Errors
-///
-/// Returns an error if the environment variable is missing or empty.
-pub fn local_appdata() -> Result<PathBuf> {
-    env_dir("LOCALAPPDATA")
-}
-
 /// `%APPDATA%\EldenRing` — the save root that holds numeric `SteamID64` dirs.
 ///
 /// # Errors
 ///
 /// Returns an error if `%APPDATA%` cannot be resolved.
 pub fn elden_ring_root() -> Result<PathBuf> {
-    Ok(appdata_roaming()?.join("EldenRing"))
+    Ok(app_folders::roaming_app_data()
+        .context("could not resolve the %APPDATA% folder")?
+        .join("EldenRing"))
 }
 
-/// `%LOCALAPPDATA%\EldenRingSaveGuard` — config and logs.
+/// `%LOCALAPPDATA%\EldenRingSaveGuard` — config and logs. Off Windows,
+/// `EldenRingSaveGuard` under the XDG data folder.
 ///
 /// # Errors
 ///
 /// Returns an error if `%LOCALAPPDATA%` cannot be resolved.
 pub fn app_data_dir() -> Result<PathBuf> {
-    Ok(local_appdata()?.join(APP_NAME))
+    app_folders::app_data_dir(APP_NAME).context("could not resolve the %LOCALAPPDATA% folder")
 }
 
 /// Return the application configuration path.

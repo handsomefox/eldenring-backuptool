@@ -133,7 +133,7 @@ cargo build --release                                        # on Windows
 
 The package has one library and one binary:
 
-- `src/lib.rs` is the portable core (`config`, `discovery`, `snapshot`, `retention`, `launch`, `paths`, `monitor`, `platform`, `logging`) and holds the unit tests.
+- `src/lib.rs` is the portable core (`config`, `discovery`, `snapshot`, `retention`, `launch`, `paths`, `monitor`, `platform`) and holds the unit tests.
 - `src/main.rs` dispatches between the GUI and `--monitor`.
 - `src/gui.rs` is the egui dashboard, behind the `gui` feature so the core tests stay GUI-free.
 

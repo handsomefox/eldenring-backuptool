@@ -6,7 +6,6 @@
 pub mod config;
 pub mod discovery;
 pub mod launch;
-pub mod logging;
 pub mod monitor;
 pub mod paths;
 pub mod platform;
