@@ -33,14 +33,8 @@ anyhow = "=1.0.104"
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
 directories = "=6.0.0"
-# The self-updater in `update.rs`, shared byte-for-byte with the other apps.
-flate2 = { version = "=1.1.10", default-features = false, features = ["zlib-rs"] }
-reqwest = { version = "=0.13.5", default-features = false, features = ["blocking", "json", "rustls-no-provider"] }
-# reqwest's `rustls-no-provider` feature deliberately selects no crypto backend;
-# this direct dependency exposes ring, which `update::Client` installs once.
-rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
-tar = { version = "=0.4.46", default-features = false }
-thiserror = "=2.0.21"
+# The self-updater, from its own repository. `lib.rs` re-exports it as `update`.
+app-update = { git = "https://github.com/handsomefox/app-update", tag = "v0.1.0", version = "=0.1.0" }
 # GUI + dialogs: optional, enabled by the `gui` feature (see [features]).
 eframe = { version = "=0.37.0", default-features = false, features = ["clipboard", "default_fonts", "glow", "x11"], optional = true }
 egui = { version = "=0.37.0", features = ["monochrome_emoji_fonts"], optional = true }

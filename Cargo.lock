@@ -79,6 +79,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "app-update"
+version = "0.1.0"
+source = "git+https://github.com/handsomefox/app-update?tag=v0.1.0#f79d656fca1a65dcabbd1675ad57d23e4c4c1439"
+dependencies = [
+ "flate2",
+ "reqwest",
+ "rustls",
+ "serde",
+ "sha2",
+ "tar",
+ "thiserror 2.0.21",
+ "tracing",
+ "zip",
+]
+
+[[package]]
 name = "arboard"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -676,20 +692,16 @@ name = "eldenring-backuptool"
 version = "1.2.3"
 dependencies = [
  "anyhow",
+ "app-update",
  "chrono",
  "directories",
  "eframe",
  "egui",
- "flate2",
- "reqwest",
  "rfd",
- "rustls",
  "serde",
  "serde_json",
  "sha2",
- "tar",
  "tempfile",
- "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
  "windows-sys 0.61.2",

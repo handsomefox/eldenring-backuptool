@@ -9,7 +9,7 @@ One library and one binary, split so the core stays testable without a GUI:
 - `src/lib.rs` is the portable core: `config`, `discovery`, `snapshot`, `retention`, `launch`, `paths`, `monitor`, `platform`, and `logging`. The unit tests live here.
 - `src/gui.rs` is the egui dashboard, behind the default `gui` feature.
 - `src/main.rs` dispatches between the GUI and `--monitor`.
-- `src/update.rs` updates the app itself from its GitHub releases. It is byte-for-byte the same file as `crates/app-update/src/lib.rs` in the other four apps, so change it in every app at once. Only the dashboard creates an updater; `--monitor` never contacts GitHub.
+- `update` updates the app itself from its GitHub releases. `src/lib.rs` re-exports it from the `app-update` crate, which lives in its own repository, [handsomefox/app-update](https://github.com/handsomefox/app-update), pinned to a tag. That repository's `AGENTS.md` covers changing and releasing it. Only the dashboard creates an updater; `--monitor` never contacts GitHub.
 
 Put new logic in the core rather than in `gui.rs`, so it can be tested on Linux. A function that reaches for egui types is in the wrong file.
 
