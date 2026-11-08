@@ -832,7 +832,7 @@ mod tests {
         let path = snapshot.dir.join(ARCHIVE_FILE);
         let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
         tamper_archive_same_size(snapshot);
-        std::fs::File::options()
+        File::options()
             .write(true)
             .open(&path)
             .unwrap()
