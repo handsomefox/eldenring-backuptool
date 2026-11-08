@@ -701,7 +701,7 @@ impl App {
             }
         });
         ui.label(format!(
-            "Interval is clamped to at least {MIN_INTERVAL_SECS}s. Stage toggles apply the next time the game launches."
+            "Intervals below {MIN_INTERVAL_SECS}s are rejected. Stage toggles apply the next time the game launches."
         ));
     }
 
