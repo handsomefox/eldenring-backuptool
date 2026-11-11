@@ -247,11 +247,18 @@ impl App {
         self.candidates.iter().find(|c| &c.steamid == id)
     }
 
-    fn save_config(&mut self) {
-        if let Some(path) = &self.config_path {
-            match config::save(path, &self.config) {
-                Ok(()) => {}
-                Err(e) => self.status = Some((true, format!("Could not save settings: {e}"))),
+    /// Writes the settings, and reports whether they were written. On
+    /// failure the error is already in the status bar, and a success message
+    /// must not replace it.
+    fn save_config(&mut self) -> bool {
+        let Some(path) = &self.config_path else {
+            return true;
+        };
+        match config::save(path, &self.config) {
+            Ok(()) => true,
+            Err(e) => {
+                self.status = Some((true, format!("Could not save settings: {e}")));
+                false
             }
         }
     }
@@ -277,6 +284,7 @@ impl App {
             .as_deref()
             .and_then(|id| paths::default_backup_dest(id).ok());
         let was_using_default = self.config.backup_dest.as_ref() == previous_default.as_ref();
+        let previous = self.config.clone();
         self.config.selected_steamid = Some(steamid.to_string());
         if (self.config.backup_dest.is_none() || was_using_default)
             && let Ok(dest) = paths::default_backup_dest(steamid)
@@ -284,9 +292,22 @@ impl App {
             self.config.backup_dest = Some(dest.clone());
             self.dest_edit = dest.display().to_string();
         }
-        self.save_config();
+        // The background monitor reads the file, so the dashboard keeps what
+        // the file holds when it cannot be written.
+        let saved = self.save_config();
+        if !saved {
+            self.config = previous;
+            self.dest_edit = self
+                .config
+                .backup_dest
+                .as_ref()
+                .map(|dest| dest.display().to_string())
+                .unwrap_or_default();
+        }
         self.refresh();
-        self.status = Some((false, format!("Protecting account {steamid}")));
+        if saved {
+            self.status = Some((false, format!("Protecting account {steamid}")));
+        }
     }
 
     fn backup_now(&mut self) {
@@ -361,12 +382,18 @@ impl App {
             self.status = Some((true, e.to_string()));
             return;
         }
+        let previous = self.config.clone();
         self.config.interval_secs = interval;
         self.config.retention = retention;
         self.config.backup_dest = Some(dest);
-        self.save_config();
+        let saved = self.save_config();
+        if !saved {
+            self.config = previous;
+        }
         self.refresh();
-        self.status = Some((false, "Settings saved.".into()));
+        if saved {
+            self.status = Some((false, "Settings saved.".into()));
+        }
     }
 }
 
