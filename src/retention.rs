@@ -25,7 +25,7 @@ pub fn create_and_prune(
     let Some(snapshot) = snapshot::create(dest, steamid, source_files, reason)? else {
         return Ok(None);
     };
-    let removed = apply(dest, steamid, keep);
+    let removed = prune(dest, steamid, keep, Some(&snapshot.dir));
     Ok(Some((snapshot, removed)))
 }
 
@@ -35,14 +35,33 @@ pub fn create_and_prune(
 /// pass [`snapshot::list_rehashed`] are counted or deleted, so a corrupt one
 /// neither takes one of the `keep` slots nor gets removed. A snapshot that
 /// cannot be removed is logged and left in place.
+#[must_use]
 pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Vec<Snapshot> {
+    prune(dest, steamid, keep, None)
+}
+
+/// [`apply`], never removing the snapshot in `newest`.
+///
+/// Snapshots sort by the time recorded when each was made. After the clock
+/// is set back, the snapshot just made can sort before older ones, and plain
+/// [`apply`] would delete the one it was called to make room for. The one in
+/// `newest` takes one of the `keep` slots and the rest go to the others,
+/// newest first.
+fn prune(dest: &Path, steamid: &str, keep: usize, newest: Option<&Path>) -> Vec<Snapshot> {
     let keep = keep.max(1);
-    let snaps = snapshot::list_rehashed(dest, steamid); // oldest → newest, temp dirs excluded
-    if snaps.len() <= keep {
+    let mut snaps = snapshot::list_rehashed(dest, steamid); // oldest → newest, temp dirs excluded
+    let mut keep_others = keep;
+    if let Some(newest) = newest
+        && let Some(index) = snaps.iter().position(|snap| snap.dir == newest)
+    {
+        snaps.remove(index);
+        keep_others -= 1;
+    }
+    if snaps.len() <= keep_others {
         return Vec::new();
     }
     let snaps_dir = snapshot::snapshots_dir(dest);
-    let remove_count = snaps.len() - keep;
+    let remove_count = snaps.len() - keep_others;
     let mut removed = Vec::new();
     for snap in snaps.into_iter().take(remove_count) {
         // Defense in depth: never delete anything outside the managed tree.
@@ -120,6 +139,33 @@ mod tests {
     }
 
     #[test]
+    fn the_new_snapshot_survives_a_clock_set_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path().to_path_buf();
+        make_snapshots(&d, 1);
+        // The earlier snapshot was taken while the clock ran a year ahead, so
+        // the next one sorts before it.
+        let earlier = snapshot::list(&d, "111").remove(0);
+        let metadata = earlier.dir.join(snapshot::METADATA_FILE);
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&metadata).unwrap()).unwrap();
+        let ahead = earlier.metadata.created_utc + chrono::Duration::days(365);
+        json["created_utc"] = serde_json::json!(ahead);
+        std::fs::write(&metadata, serde_json::to_vec(&json).unwrap()).unwrap();
+
+        let src = d.join("ER0000.sl2");
+        std::fs::write(&src, b"after the clock was fixed").unwrap();
+        let (created, removed) =
+            create_and_prune(&d, "111", std::slice::from_ref(&src), Reason::Periodic, 1)
+                .unwrap()
+                .unwrap();
+        assert!(created.dir.exists(), "retention deleted the new snapshot");
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].dir, earlier.dir);
+        assert_eq!(snapshot::list(&d, "111").len(), 1);
+    }
+
+    #[test]
     fn corrupt_snapshot_is_neither_counted_nor_deleted() {
         let tmp = tempfile::tempdir().unwrap();
         let d = tmp.path().to_path_buf();
@@ -159,7 +205,7 @@ mod tests {
         // A stray temp dir must be neither counted nor deleted by retention.
         let stray = snapshot::snapshots_dir(&d).join(".tmp-999-999");
         std::fs::create_dir_all(&stray).unwrap();
-        apply(&d, "111", 1);
+        let _ = apply(&d, "111", 1);
         assert!(stray.exists());
         assert_eq!(snapshot::list(&d, "111").len(), 1);
     }
