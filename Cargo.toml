@@ -36,6 +36,7 @@ directories = "=6.0.0"
 # app-update as `update`. app-update-ui and app-diagnostics are GUI-only.
 app-update = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.2", version = "=0.2.2" }
 app-folders = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.2", version = "=0.2.2" }
+app-process = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.2", version = "=0.2.2" }
 app-update-ui = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.2", version = "=0.2.2", optional = true }
 app-diagnostics = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.2", version = "=0.2.2", optional = true }
 # GUI + dialogs: optional, enabled by the `gui` feature (see [features]).
@@ -47,7 +48,6 @@ rfd = { version = "=0.17.2", default-features = false, features = ["common-contr
 windows-sys = { version = "=0.61.2", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
-    "Win32_System_Diagnostics_ToolHelp",
     "Win32_Storage_FileSystem",
     "Win32_Security",
 ] }

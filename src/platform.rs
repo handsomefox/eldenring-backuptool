@@ -7,58 +7,13 @@
 
 /// True if a process with the given executable name (e.g. `eldenring.exe`) is
 /// currently running. Case-insensitive.
-#[cfg(windows)]
+///
+/// `app_process` lists executable names through one Toolhelp snapshot and
+/// never opens a handle to any process, which keeps this outside Easy
+/// Anti-Cheat's view.
 #[must_use]
-#[expect(
-    clippy::multiple_unsafe_ops_per_block,
-    reason = "Toolhelp enumeration owns one snapshot handle for the complete iteration"
-)]
 pub fn process_running(exe_name: &str) -> bool {
-    use std::mem::{size_of, zeroed};
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
-        TH32CS_SNAPPROCESS,
-    };
-
-    // SAFETY: standard Toolhelp enumeration. We only read process names; the
-    // snapshot handle is closed before returning.
-    unsafe {
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if snapshot == INVALID_HANDLE_VALUE {
-            return false;
-        }
-        let mut entry: PROCESSENTRY32W = zeroed();
-        entry.dwSize = u32::try_from(size_of::<PROCESSENTRY32W>()).unwrap_or_default();
-
-        let mut found = false;
-        if Process32FirstW(snapshot, &raw mut entry) != 0 {
-            loop {
-                if wide_eq_ignore_case(&entry.szExeFile, exe_name) {
-                    found = true;
-                    break;
-                }
-                if Process32NextW(snapshot, &raw mut entry) == 0 {
-                    break;
-                }
-            }
-        }
-        CloseHandle(snapshot);
-        found
-    }
-}
-
-#[cfg(not(windows))]
-#[must_use]
-pub fn process_running(_exe_name: &str) -> bool {
-    false
-}
-
-#[cfg(windows)]
-fn wide_eq_ignore_case(wide: &[u16], name: &str) -> bool {
-    let end = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
-    let s = String::from_utf16_lossy(&wide[..end]);
-    s.eq_ignore_ascii_case(name)
+    app_process::is_running(exe_name)
 }
 
 /// Free bytes available to the caller on the volume containing `path`.

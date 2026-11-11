@@ -98,6 +98,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "app-process"
+version = "0.2.2"
+source = "git+https://github.com/handsomefox/app-internals?tag=v0.2.2#306c7853f669b94d37aed0d6c6eb767dae0b374b"
+dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "app-update"
 version = "0.2.2"
 source = "git+https://github.com/handsomefox/app-internals?tag=v0.2.2#306c7853f669b94d37aed0d6c6eb767dae0b374b"
@@ -722,6 +730,7 @@ dependencies = [
  "anyhow",
  "app-diagnostics",
  "app-folders",
+ "app-process",
  "app-update",
  "app-update-ui",
  "chrono",
