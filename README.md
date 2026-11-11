@@ -25,6 +25,7 @@ Save Guard cannot stop an attack or a corruption while it is happening. Nothing 
 - The Steam version of Elden Ring.
 - Vanilla saves: `ER0000.sl2` and its `ER0000.sl2.bak`.
 - No administrator rights needed.
+- The Microsoft Visual C++ Redistributable for x64, which most Windows installations already have. If Windows reports that `VCRUNTIME140.dll` was not found, install the [latest supported redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
 
 Seamless Co-op `.co2` saves are not handled in this release.
 
