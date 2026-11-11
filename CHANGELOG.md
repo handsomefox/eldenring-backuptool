@@ -2,6 +2,17 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.2.7
+
+- Keep the backup that was just made when the clock was set back since an earlier one. Retention
+  sorted it before the older backups and, with a low limit, deleted it.
+- Show **Settings saved.** only when the settings were written. A failed save showed its error for
+  a moment, and the dashboard kept the unsaved values while the background monitor read the old
+  ones. A failed save now keeps its error and puts the previous settings back. Choosing an account
+  works the same way.
+- Opening a second copy of the dashboard while the first has an update waiting no longer deletes
+  the first copy's download.
+
 ## 1.2.6
 
 - Hash every backup again before deciding whether a new one is a duplicate, and which old ones to
