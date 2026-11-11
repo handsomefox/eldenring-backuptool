@@ -34,10 +34,10 @@ tracing = "=0.1.44"
 directories = "=6.0.0"
 # The crates the apps share, from handsomefox/app-internals. `lib.rs` re-exports
 # app-update as `update`. app-update-ui and app-diagnostics are GUI-only.
-app-update = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.1", version = "=0.2.1" }
-app-folders = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.1", version = "=0.2.1" }
-app-update-ui = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.1", version = "=0.2.1", optional = true }
-app-diagnostics = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.1", version = "=0.2.1", optional = true }
+app-update = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.2", version = "=0.2.2" }
+app-folders = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.2", version = "=0.2.2" }
+app-update-ui = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.2", version = "=0.2.2", optional = true }
+app-diagnostics = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.2", version = "=0.2.2", optional = true }
 # GUI + dialogs: optional, enabled by the `gui` feature (see [features]).
 eframe = { version = "=0.37.0", default-features = false, features = ["clipboard", "default_fonts", "glow", "x11"], optional = true }
 egui = { version = "=0.37.0", features = ["monochrome_emoji_fonts"], optional = true }
