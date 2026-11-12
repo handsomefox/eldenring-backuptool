@@ -33,7 +33,7 @@ Some consequences worth stating outright:
 
 Retention keeps the newest N snapshots per account, counting only those that pass their integrity check. It deletes nothing else: it removes finalized snapshot folders that sit directly under `<destination>/snapshots/`, ignores temporary folders, and never touches anything outside that tree.
 
-The new snapshot is finalized before old ones are pruned, so a good save is never deleted before its replacement exists.
+The new snapshot is finalized before old ones are pruned, so a good save is never deleted before its replacement exists. Every backup holds a lock on `<destination>/snapshots/.lock` from the copy through the prune, so a backup from the window and one from the background monitor never prune each other's new snapshot.
 
 ## Path guards
 

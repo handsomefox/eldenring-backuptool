@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::snapshot::{self, Reason, Snapshot};
 
@@ -22,6 +22,7 @@ pub fn create_and_prune(
     reason: Reason,
     keep: usize,
 ) -> Result<Option<(Snapshot, Vec<Snapshot>)>> {
+    let _lock = lock(dest)?;
     let Some(snapshot) = snapshot::create(dest, steamid, source_files, reason)? else {
         return Ok(None);
     };
@@ -37,7 +38,27 @@ pub fn create_and_prune(
 /// cannot be removed is logged and left in place.
 #[must_use]
 pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Vec<Snapshot> {
+    let Ok(_lock) = lock(dest).inspect_err(|e| tracing::warn!("retention skipped: {e:#}")) else {
+        return Vec::new();
+    };
     prune(dest, steamid, keep, None)
+}
+
+/// Waits for, then holds, the lock on `<dest>/snapshots` that every backup
+/// and prune takes, across processes. Without it the window and the monitor
+/// could each make a snapshot, then each prune the other's, leaving none.
+fn lock(dest: &Path) -> Result<std::fs::File> {
+    let dir = snapshot::ensure_snapshots_dir(dest)?;
+    let path = dir.join(".lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("opening {}", path.display()))?;
+    file.lock()
+        .with_context(|| format!("locking {}", path.display()))?;
+    Ok(file)
 }
 
 /// [`apply`], never removing the snapshot in `newest`.
@@ -162,6 +183,23 @@ mod tests {
         assert!(created.dir.exists(), "retention deleted the new snapshot");
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0].dir, earlier.dir);
+        assert_eq!(snapshot::list(&d, "111").len(), 1);
+    }
+
+    #[test]
+    fn backups_hold_a_lock_that_shuts_out_another_backup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path().to_path_buf();
+        make_snapshots(&d, 1);
+        let held = lock(&d).unwrap();
+        let other = std::fs::OpenOptions::new()
+            .write(true)
+            .open(snapshot::snapshots_dir(&d).join(".lock"))
+            .unwrap();
+        assert!(other.try_lock().is_err(), "a second backup must wait");
+        drop(held);
+        assert!(other.try_lock().is_ok());
+        // The lock file is not a snapshot.
         assert_eq!(snapshot::list(&d, "111").len(), 1);
     }
 
