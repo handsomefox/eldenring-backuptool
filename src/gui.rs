@@ -252,7 +252,11 @@ impl App {
     /// must not replace it.
     fn save_config(&mut self) -> bool {
         let Some(path) = &self.config_path else {
-            return true;
+            self.status = Some((
+                true,
+                "Could not save settings: the %LOCALAPPDATA% folder could not be found.".into(),
+            ));
+            return false;
         };
         match config::save(path, &self.config) {
             Ok(()) => true,
