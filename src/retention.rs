@@ -22,7 +22,36 @@ pub fn create_and_prune(
     reason: Reason,
     keep: usize,
 ) -> Result<Option<(Snapshot, Vec<Snapshot>)>> {
-    let _lock = lock(dest)?;
+    let _lock = lock(dest, Wait::Yes)?;
+    create_and_prune_locked(dest, steamid, source_files, reason, keep)
+}
+
+/// [`create_and_prune`], unless another backup holds the lock, which is an
+/// error at once. The background monitor uses it: waiting before the game
+/// starts would hold up the launch.
+///
+/// # Errors
+///
+/// Returns an error if another backup is running or [`snapshot::create`]
+/// fails; nothing is pruned then.
+pub fn try_create_and_prune(
+    dest: &Path,
+    steamid: &str,
+    source_files: &[PathBuf],
+    reason: Reason,
+    keep: usize,
+) -> Result<Option<(Snapshot, Vec<Snapshot>)>> {
+    let _lock = lock(dest, Wait::No)?;
+    create_and_prune_locked(dest, steamid, source_files, reason, keep)
+}
+
+fn create_and_prune_locked(
+    dest: &Path,
+    steamid: &str,
+    source_files: &[PathBuf],
+    reason: Reason,
+    keep: usize,
+) -> Result<Option<(Snapshot, Vec<Snapshot>)>> {
     let Some(snapshot) = snapshot::create(dest, steamid, source_files, reason)? else {
         return Ok(None);
     };
@@ -38,16 +67,26 @@ pub fn create_and_prune(
 /// cannot be removed is logged and left in place.
 #[must_use]
 pub fn apply(dest: &Path, steamid: &str, keep: usize) -> Vec<Snapshot> {
-    let Ok(_lock) = lock(dest).inspect_err(|e| tracing::warn!("retention skipped: {e:#}")) else {
+    let Ok(_lock) =
+        lock(dest, Wait::Yes).inspect_err(|e| tracing::warn!("retention skipped: {e:#}"))
+    else {
         return Vec::new();
     };
     prune(dest, steamid, keep, None)
 }
 
-/// Waits for, then holds, the lock on `<dest>/snapshots` that every backup
-/// and prune takes, across processes. Without it the window and the monitor
-/// could each make a snapshot, then each prune the other's, leaving none.
-fn lock(dest: &Path) -> Result<std::fs::File> {
+/// Whether [`lock`] waits for another backup to finish.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Wait {
+    Yes,
+    No,
+}
+
+/// Holds the lock on `<dest>/snapshots` that every backup and prune takes,
+/// across processes, waiting for it or not. Without it the window and the
+/// monitor could each make a snapshot, then each prune the other's, leaving
+/// none.
+fn lock(dest: &Path, wait: Wait) -> Result<std::fs::File> {
     let dir = snapshot::ensure_snapshots_dir(dest)?;
     let path = dir.join(".lock");
     let file = std::fs::OpenOptions::new()
@@ -56,8 +95,19 @@ fn lock(dest: &Path) -> Result<std::fs::File> {
         .write(true)
         .open(&path)
         .with_context(|| format!("opening {}", path.display()))?;
-    file.lock()
-        .with_context(|| format!("locking {}", path.display()))?;
+    match wait {
+        Wait::Yes => file
+            .lock()
+            .with_context(|| format!("locking {}", path.display()))?,
+        Wait::No => file.try_lock().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => {
+                anyhow::anyhow!("another backup of this destination is running")
+            }
+            std::fs::TryLockError::Error(error) => {
+                anyhow::Error::new(error).context(format!("locking {}", path.display()))
+            }
+        })?,
+    }
     Ok(file)
 }
 
@@ -191,7 +241,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let d = tmp.path().to_path_buf();
         make_snapshots(&d, 1);
-        let held = lock(&d).unwrap();
+        let held = lock(&d, Wait::Yes).unwrap();
+        // The monitor's backup does not wait: it fails at once and makes nothing.
+        let src = d.join("ER0000.sl2");
+        std::fs::write(&src, b"changed while another backup runs").unwrap();
+        let busy = try_create_and_prune(&d, "111", std::slice::from_ref(&src), Reason::Periodic, 5);
+        assert!(busy.unwrap_err().to_string().contains("another backup"));
+        assert_eq!(snapshot::list(&d, "111").len(), 1);
         let other = std::fs::OpenOptions::new()
             .write(true)
             .open(snapshot::snapshots_dir(&d).join(".lock"))

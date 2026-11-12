@@ -180,7 +180,9 @@ fn backup(target: &Target, reason: Reason) {
         return;
     };
     let sources = candidate.source_files();
-    match retention::create_and_prune(
+    // Never waits for a backup the window is making: the pre-launch backup
+    // runs before the game starts, and invariant 1 is never to hold it up.
+    match retention::try_create_and_prune(
         &target.dest,
         &target.steamid,
         &sources,
