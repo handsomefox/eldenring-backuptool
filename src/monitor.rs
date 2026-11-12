@@ -70,7 +70,9 @@ where
     tracing::info!("game launcher started, waiting for {GAME_PROCESS}");
 
     let Some(target) = target else {
-        let _ = child.wait();
+        // No backups this session, but Steam still sees the game as running
+        // only while this process lives, so it waits for the game all the same.
+        wait_for_game(&mut child);
         return 0;
     };
 
@@ -123,6 +125,20 @@ fn resolve_target() -> anyhow::Result<Target> {
         steamid,
         dest,
     })
+}
+
+/// Waits for the game to appear and exit, or for the launcher when the game
+/// never appears, without taking any snapshot.
+fn wait_for_game(child: &mut std::process::Child) {
+    if !wait_for(|| platform::process_running(GAME_PROCESS), APPEAR_TIMEOUT) {
+        tracing::warn!("{GAME_PROCESS} did not appear within timeout; waiting on launcher");
+        let _ = child.wait();
+        return;
+    }
+    while platform::process_running(GAME_PROCESS) {
+        std::thread::sleep(PROCESS_POLL);
+    }
+    let _ = child.try_wait();
 }
 
 /// Poll for the game, take periodic snapshots on content change, then wait for
