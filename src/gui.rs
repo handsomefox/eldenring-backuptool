@@ -65,6 +65,13 @@ enum Tab {
     Help,
 }
 
+/// Which backup stages the Settings tab shows checked.
+struct Stages {
+    pre_launch: bool,
+    periodic: bool,
+    post_exit: bool,
+}
+
 struct App {
     config: Config,
     config_path: Option<PathBuf>,
@@ -78,6 +85,8 @@ struct App {
     dest_edit: String,
     interval_edit: String,
     retention_edit: String,
+    /// The stage toggles as edited, committed to `config` only by Apply.
+    stages_edit: Stages,
     ctx: egui::Context,
     job: Option<Job>,
     free_space: Option<u64>,
@@ -158,6 +167,11 @@ impl App {
                 .unwrap_or_default(),
             interval_edit: config.interval_secs.to_string(),
             retention_edit: config.retention.to_string(),
+            stages_edit: Stages {
+                pre_launch: config.pre_launch,
+                periodic: config.periodic,
+                post_exit: config.post_exit,
+            },
             config,
             config_path,
             elden_root,
@@ -398,6 +412,9 @@ impl App {
         self.config.interval_secs = interval;
         self.config.retention = retention;
         self.config.backup_dest = Some(dest);
+        self.config.pre_launch = self.stages_edit.pre_launch;
+        self.config.periodic = self.stages_edit.periodic;
+        self.config.post_exit = self.stages_edit.post_exit;
         let saved = self.save_config();
         if !saved {
             self.config = previous;
@@ -712,14 +729,17 @@ impl App {
 
         ui.add_space(4.0);
         ui.checkbox(
-            &mut self.config.pre_launch,
+            &mut self.stages_edit.pre_launch,
             "Snapshot before the game launches",
         );
         ui.checkbox(
-            &mut self.config.periodic,
+            &mut self.stages_edit.periodic,
             "Snapshot periodically while playing",
         );
-        ui.checkbox(&mut self.config.post_exit, "Snapshot after the game exits");
+        ui.checkbox(
+            &mut self.stages_edit.post_exit,
+            "Snapshot after the game exits",
+        );
 
         ui.separator();
         ui.horizontal(|ui| {
