@@ -330,6 +330,14 @@ impl App {
         let root = self.elden_root.clone();
         self.start_job(JobKind::Backup, move || {
             let result = (|| -> anyhow::Result<String> {
+                // Found again now: the game may have written or removed its
+                // .bak since the list was last refreshed.
+                let candidate = match root.as_deref() {
+                    Some(root) => discovery::find(root, &candidate.steamid).ok_or_else(|| {
+                        anyhow::anyhow!("the save folder for {} is gone", candidate.steamid)
+                    })?,
+                    None => candidate,
+                };
                 paths::validate_backup_dest(&candidate.dir, &dest)?;
                 let sources = candidate.source_files();
                 match retention::create_and_prune(
