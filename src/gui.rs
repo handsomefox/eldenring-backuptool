@@ -427,20 +427,24 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    /// Runs before every frame, and also while the window is minimized, when eframe calls only
+    /// this. A close request mid-backup then still waits for the backup.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_job();
-        let before = self.config.app_updates.clone();
-        self.updater.poll(&mut self.config.app_updates);
-        if self.config.app_updates != before {
-            self.save_update_settings();
-        }
-        if self.backing_up() && ui.ctx().input(|input| input.viewport().close_requested()) {
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if self.backing_up() && ctx.input(|input| input.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.status = Some((
                 false,
                 "Wait for the backup to finish before closing.".into(),
             ));
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let before = self.config.app_updates.clone();
+        self.updater.poll(&mut self.config.app_updates);
+        if self.config.app_updates != before {
+            self.save_update_settings();
         }
         egui::Panel::top("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
