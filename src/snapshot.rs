@@ -897,13 +897,23 @@ mod tests {
         tamper_archive_keeping_stamp(&latest);
 
         // The dashboard may still show it from the cache, but nothing that
-        // decides what to keep or whether to back up may trust that.
-        assert_eq!(newest(&e.dest, "111").unwrap().dir, older.dir);
+        // decides what to keep or whether to back up may trust that. A failed
+        // rehash drops the cache entry, so retention runs first, while the
+        // cache still vouches for the damaged archive.
         let kept: Vec<_> = list_rehashed(&e.dest, "111")
             .into_iter()
             .map(|s| s.dir)
             .collect();
-        assert_eq!(kept, vec![older.dir]);
+        assert_eq!(kept, vec![older.dir.clone()]);
+
+        // The same for deduplication, with the cache vouching again.
+        write(&src[0], b"newest");
+        let third = create(&e.dest, "111", &src, Reason::Periodic)
+            .unwrap()
+            .unwrap();
+        assert_eq!(list_verified(&e.dest, "111").len(), 2);
+        tamper_archive_keeping_stamp(&third);
+        assert_eq!(newest(&e.dest, "111").unwrap().dir, older.dir);
     }
 
     #[test]
