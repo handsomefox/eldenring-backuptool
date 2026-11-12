@@ -123,6 +123,44 @@ pub fn snapshots_dir(dest: &Path) -> PathBuf {
     dest.join("snapshots")
 }
 
+/// Creates `<dest>/snapshots` if needed and returns it, refusing one that is
+/// a symlink or junction: writes and deletes there would land wherever it
+/// points, such as the live save folder.
+///
+/// # Errors
+///
+/// Returns an error if the folder cannot be created or is not a real folder.
+pub fn ensure_snapshots_dir(dest: &Path) -> Result<PathBuf> {
+    let dir = snapshots_dir(dest);
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    if !is_real_dir_path(&dir) {
+        bail!(
+            "{} is a link or junction, not a folder; backups will not be written through it",
+            dir.display()
+        );
+    }
+    Ok(dir)
+}
+
+/// Whether `path` is a directory itself, not a symlink or a junction.
+fn is_real_dir_path(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return false;
+        }
+    }
+    true
+}
+
 fn source_name(path: &Path) -> Result<String> {
     let name = path
         .file_name()
@@ -379,7 +417,13 @@ fn is_real_directory(entry: &std::fs::DirEntry) -> bool {
 #[must_use]
 pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(snapshots_dir(dest)) else {
+    let dir = snapshots_dir(dest);
+    // A snapshots folder that is a link or junction lists nothing, so
+    // retention never deletes through it.
+    if !is_real_dir_path(&dir) {
+        return out;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return out;
     };
     for entry in entries.flatten() {
@@ -496,9 +540,7 @@ pub fn create_with_hook(
         }
     }
 
-    let snaps_dir = snapshots_dir(dest);
-    std::fs::create_dir_all(&snaps_dir)
-        .with_context(|| format!("creating {}", snaps_dir.display()))?;
+    let snaps_dir = ensure_snapshots_dir(dest)?;
 
     // Fast path: skip the copy if the source already matches the newest
     // snapshot. Authoritative hashes still come from the stable copy below.

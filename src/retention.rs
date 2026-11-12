@@ -165,6 +165,29 @@ mod tests {
         assert_eq!(snapshot::list(&d, "111").len(), 1);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_snapshots_folder_is_neither_written_nor_pruned() {
+        let tmp = tempfile::tempdir().unwrap();
+        let live = tmp.path().join("live");
+        std::fs::create_dir_all(&live).unwrap();
+        make_snapshots(&live, 2);
+        // The destination's snapshots folder points at another tree.
+        let d = tmp.path().join("dest");
+        std::fs::create_dir_all(&d).unwrap();
+        std::os::unix::fs::symlink(snapshot::snapshots_dir(&live), snapshot::snapshots_dir(&d))
+            .unwrap();
+        let src = d.join("ER0000.sl2");
+        std::fs::write(&src, b"new").unwrap();
+
+        assert!(
+            create_and_prune(&d, "111", std::slice::from_ref(&src), Reason::Manual, 1).is_err()
+        );
+        assert!(snapshot::list(&d, "111").is_empty());
+        assert!(apply(&d, "111", 1).is_empty());
+        assert_eq!(snapshot::list(&live, "111").len(), 2);
+    }
+
     #[test]
     fn corrupt_snapshot_is_neither_counted_nor_deleted() {
         let tmp = tempfile::tempdir().unwrap();

@@ -37,4 +37,4 @@ The new snapshot is finalized before old ones are pruned, so a good save is neve
 
 ## Path guards
 
-The backup destination may not sit inside the live save folder, and the save folder may not sit inside the backup destination. Save Guard checks both directions after resolving existing symlinks and Windows junctions, and the GUI and the background monitor apply the same check. Without it, backups could end up backing up backups, or a retention delete could reach the live save.
+The backup destination may not sit inside the live save folder, and the save folder may not sit inside the backup destination. Save Guard checks both directions after resolving existing symlinks and Windows junctions, and the GUI and the background monitor apply the same check. Without it, backups could end up backing up backups, or a retention delete could reach the live save. A `snapshots/` folder that is itself a symlink or junction is refused: nothing is written through it, and retention lists nothing in it.
