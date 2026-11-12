@@ -433,6 +433,10 @@ impl eframe::App for App {
         self.poll_job();
         if self.backing_up() && ctx.input(|input| input.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            // A close from the taskbar can come while minimized; bring the
+            // window back so the reason is seen.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             self.status = Some((
                 false,
                 "Wait for the backup to finish before closing.".into(),
