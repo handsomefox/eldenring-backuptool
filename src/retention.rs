@@ -7,23 +7,28 @@ use anyhow::{Context, Result};
 
 use crate::snapshot::{self, Reason, Snapshot};
 
-/// Create a snapshot of `source_files` and, only once it is finalized, prune
-/// the account's snapshots down to `keep`. Returns the new snapshot and the
-/// ones removed, or `Ok(None)` when the save is unchanged and nothing was
-/// created or pruned.
+/// Wait for any other backup to `dest`, then snapshot the files
+/// `source_files` returns and, only once the snapshot is finalized, prune the
+/// account's snapshots down to `keep`. Returns the new snapshot and the ones
+/// removed, or `Ok(None)` when the save is unchanged and nothing was created
+/// or pruned.
+///
+/// The files are collected only once the wait is over, because the game may
+/// write or remove its `.bak` in the meantime.
 ///
 /// # Errors
 ///
-/// Returns an error if [`snapshot::create`] fails; nothing is pruned then.
+/// Returns an error if `source_files` or [`snapshot::create`] fails; nothing
+/// is pruned then.
 pub fn create_and_prune(
     dest: &Path,
     steamid: &str,
-    source_files: &[PathBuf],
+    source_files: impl FnOnce() -> Result<Vec<PathBuf>>,
     reason: Reason,
     keep: usize,
 ) -> Result<Option<(Snapshot, Vec<Snapshot>)>> {
     let _lock = lock(dest, Wait::Yes)?;
-    create_and_prune_locked(dest, steamid, source_files, reason, keep)
+    create_and_prune_locked(dest, steamid, &source_files()?, reason, keep)
 }
 
 /// [`create_and_prune`], unless another backup holds the lock, which is an
@@ -186,7 +191,7 @@ mod tests {
         let d = tmp.path().to_path_buf();
         make_snapshots(&d, 3);
         let src = d.join("ER0000.sl2");
-        let sources = std::slice::from_ref(&src);
+        let sources = || Ok(vec![src.clone()]);
 
         assert!(
             create_and_prune(&d, "111", sources, Reason::Periodic, 1)
@@ -227,7 +232,7 @@ mod tests {
         let src = d.join("ER0000.sl2");
         std::fs::write(&src, b"after the clock was fixed").unwrap();
         let (created, removed) =
-            create_and_prune(&d, "111", std::slice::from_ref(&src), Reason::Periodic, 1)
+            create_and_prune(&d, "111", || Ok(vec![src.clone()]), Reason::Periodic, 1)
                 .unwrap()
                 .unwrap();
         assert!(created.dir.exists(), "retention deleted the new snapshot");
@@ -259,6 +264,38 @@ mod tests {
         assert_eq!(snapshot::list(&d, "111").len(), 1);
     }
 
+    #[test]
+    fn a_waiting_backup_collects_the_files_once_the_other_is_done() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path().to_path_buf();
+        make_snapshots(&d, 1);
+        let src = d.join("ER0000.sl2");
+        std::fs::write(&src, b"changed while another backup runs").unwrap();
+        let held = lock(&d, Wait::Yes).unwrap();
+        let released = AtomicBool::new(false);
+
+        std::thread::scope(|scope| {
+            let waiting = scope.spawn(|| {
+                create_and_prune(
+                    &d,
+                    "111",
+                    || {
+                        assert!(released.load(Ordering::SeqCst), "collected while waiting");
+                        Ok(vec![src.clone()])
+                    },
+                    Reason::Manual,
+                    5,
+                )
+            });
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            released.store(true, Ordering::SeqCst);
+            drop(held);
+            assert!(waiting.join().unwrap().unwrap().is_some());
+        });
+        assert_eq!(snapshot::list(&d, "111").len(), 2);
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_linked_snapshots_folder_is_neither_written_nor_pruned() {
@@ -274,9 +311,7 @@ mod tests {
         let src = d.join("ER0000.sl2");
         std::fs::write(&src, b"new").unwrap();
 
-        assert!(
-            create_and_prune(&d, "111", std::slice::from_ref(&src), Reason::Manual, 1).is_err()
-        );
+        assert!(create_and_prune(&d, "111", || Ok(vec![src.clone()]), Reason::Manual, 1).is_err());
         assert!(snapshot::list(&d, "111").is_empty());
         assert!(apply(&d, "111", 1).is_empty());
         assert_eq!(snapshot::list(&live, "111").len(), 2);
