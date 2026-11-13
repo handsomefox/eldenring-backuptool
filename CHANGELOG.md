@@ -2,6 +2,31 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.2.8
+
+- The background monitor keeps running until the game exits even when it cannot back up, such as
+  before an account is chosen. It used to exit once the launcher did, so Steam saw the game as
+  closed while it still ran.
+- A backup from the window and one from the background monitor no longer prune each other's new
+  backup. With **Keep newest** set to 1 they could leave no backup at all.
+- **Back up now** finds the save files again before copying, after any backup it has to wait for. A
+  `ER0000.sl2.bak` the game wrote after the list was last refreshed was left out of the backup.
+- The stage checkboxes on **Settings** take effect only when you press **Apply**, like the other
+  settings. They changed the saved settings when you chose an account.
+- Settings report a failure when the `%LOCALAPPDATA%` folder cannot be found, instead of saying
+  **Settings saved.**
+- Closing the window from the taskbar while it is minimized during a backup brings it back with
+  "Wait for the backup to finish before closing.", as closing it normally does.
+- The background monitor no longer waits for a backup from the window before starting the game. If
+  one is running, it skips that snapshot.
+- A `snapshots` folder inside the backup destination that is a link or junction is refused: backups
+  fail with that reason and retention lists nothing there. If you linked it to another drive on
+  purpose, point the backup destination at the real folder instead.
+- Updates installed from this version on are safer with two copies of the app open. A copy that
+  starts while another installs an update no longer deletes that download, and a copy no longer
+  installs an older update over a newer one that another copy installed. Files you keep beside the
+  app, and logs you renamed to keep, are no longer deleted at startup.
+
 ## 1.2.7
 
 - Keep the backup that was just made when the clock was set back since an earlier one. Retention
