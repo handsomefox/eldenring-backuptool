@@ -2,6 +2,34 @@
 
 Releases before 1.0.7 are listed on the [releases page](https://github.com/handsomefox/eldenring-backuptool/releases).
 
+## 1.3.0
+
+- Opening Save Guard while it is already open brings the open window to the front instead of
+  starting a second copy. The background monitor that Steam starts is not affected.
+- Restore a backup from inside the app. On the **Backups** tab, click **Restore…** beside a backup
+  and confirm. Save Guard first backs up your current save as a new manual backup, and restores
+  nothing if that backup fails. It checks the chosen backup, then puts it in place. If a file
+  cannot be moved, it moves your save back, and if that fails too, it names the folder that holds
+  your previous save. Close Elden Ring first: Save Guard refuses to restore while the game runs.
+- Keep the newest 10 backups taken before the game launched and the newest 10 taken after it
+  exited, on top of **Keep newest snapshots**. A run of manual or periodic backups no longer
+  pushes out the start and end of your recent sessions.
+- List damaged backups on the **Backups** tab, marked **damaged**, instead of hiding them. The
+  **Dashboard** counts them separately. A damaged backup still takes none of the backups you keep,
+  and is now deleted once it is older than every backup Save Guard keeps. A missing `save.zip`
+  counts as damage too.
+- The background monitor waits for a backup from the window to finish before it makes its periodic
+  and after-exit backups, instead of skipping them. The backup before the game launches still
+  never waits.
+- Write each backup and the settings file to disk before they replace anything, so a power cut
+  cannot leave an empty backup or empty settings.
+- Remove the temporary folders a cut-off backup left in the `snapshots` folder.
+- The background monitor no longer moves a damaged settings file aside. The **Dashboard** now
+  finds it and says that the settings were reset.
+- Keep backing up during a game when Windows cannot create the lock that stops two monitors from
+  running at once. That session made no backups before.
+- Build with Rust 1.100.0.
+
 ## 1.2.8
 
 - The background monitor keeps running until the game exits even when it cannot back up, such as
