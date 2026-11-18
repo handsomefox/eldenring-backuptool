@@ -45,17 +45,53 @@ pub(crate) fn run() -> eframe::Result<()> {
             ),
         ..Default::default()
     };
-    let result = eframe::run_native(
-        "Elden Ring Save Guard",
-        options,
-        Box::new(|cc| Ok(Box::new(App::new(cc.egui_ctx.clone())))),
-    );
+    // The guard lives only for the window, so an updated copy started below
+    // finds the lock free.
+    let result = {
+        // A second launch brings this window forward instead of opening
+        // another. The monitor never gets here: it has its own lock.
+        let instance = match app_instance::acquire(APP_INFO.bin) {
+            Ok(app_instance::Instance::Primary(guard)) => Some(guard),
+            Ok(app_instance::Instance::Secondary) => {
+                tracing::info!("another copy is running; asked it to come forward");
+                return Ok(());
+            }
+            // Run without the guard rather than refuse to start.
+            Err(error) => {
+                tracing::warn!(%error, "running without the single-instance lock");
+                None
+            }
+        };
+        eframe::run_native(
+            "Elden Ring Save Guard",
+            options,
+            Box::new(|cc| {
+                if let Some(guard) = &instance {
+                    bring_forward_on_activate(guard, &cc.egui_ctx);
+                }
+                Ok(Box::new(App::new(cc.egui_ctx.clone())))
+            }),
+        )
+    };
     // Only the dashboard updates. The window has closed by now, so the new
     // copy starts after this one has written everything it meant to.
     if let Err(error) = update::restart_if_requested() {
         tracing::error!("could not start the updated app: {error}");
     }
     result
+}
+
+/// Restores and focuses the window whenever another launch signals.
+fn bring_forward_on_activate(guard: &app_instance::Guard, ctx: &egui::Context) {
+    let ctx = ctx.clone();
+    let watching = guard.on_activate(move || {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        ctx.request_repaint();
+    });
+    if let Err(error) = watching {
+        tracing::warn!(%error, "a second launch will not bring this window forward");
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]

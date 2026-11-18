@@ -144,21 +144,8 @@ pub fn ensure_snapshots_dir(dest: &Path) -> Result<PathBuf> {
 
 /// Whether `path` is a directory itself, not a symlink or a junction.
 fn is_real_dir_path(path: &Path) -> bool {
-    let Ok(metadata) = std::fs::symlink_metadata(path) else {
-        return false;
-    };
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return false;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return false;
-        }
-    }
-    true
+    std::fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.is_dir() && !app_paths::is_link(&metadata))
 }
 
 fn source_name(path: &Path) -> Result<String> {
@@ -400,25 +387,13 @@ fn hash_snapshot_archive(snapshot: &Snapshot) -> Result<()> {
     Ok(())
 }
 
+/// Whether `entry` is a directory itself, not a symlink or a junction.
 fn is_real_directory(entry: &std::fs::DirEntry) -> bool {
-    let Ok(file_type) = entry.file_type() else {
-        return false;
-    };
-    if !file_type.is_dir() || file_type.is_symlink() {
-        return false;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
-            return false;
-        };
-        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return false;
-        }
-    }
-    true
+    entry
+        .file_type()
+        .is_ok_and(|file_type| file_type.is_dir() && !file_type.is_symlink())
+        && std::fs::symlink_metadata(entry.path())
+            .is_ok_and(|metadata| !app_paths::is_link(&metadata))
 }
 
 /// A snapshot whose metadata names the account, with the result of checking

@@ -3,7 +3,9 @@
 //! the Windows shell and falls back to the environment; Documents uses the
 //! `directories` crate for OneDrive-redirect handling.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
+
+use app_paths::Overlap;
 
 use anyhow::{Context, Result, bail};
 
@@ -77,94 +79,42 @@ pub fn default_backup_dest_in(documents: &Path, steamid: &str) -> PathBuf {
         .join(steamid)
 }
 
-/// Lexical normalization: resolves `.`/`..` textually without touching the
-/// filesystem, so it works for paths that do not exist yet.
-fn normalize_lexical(p: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for c in p.components() {
-        match c {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
-}
-
-/// Resolve every existing ancestor through the filesystem, then append any
-/// not-yet-created tail lexically. This catches symlink/junction overlap while
-/// still allowing a new destination folder.
-fn resolve_for_comparison(path: &Path) -> Result<PathBuf> {
-    if !path.is_absolute() {
-        bail!("the backup destination must be an absolute path");
-    }
-    let normalized = normalize_lexical(path);
-    let mut current = normalized.as_path();
-    let mut tail = Vec::new();
-    loop {
-        match std::fs::canonicalize(current) {
-            Ok(mut resolved) => {
-                for component in tail.iter().rev() {
-                    resolved.push(component);
-                }
-                return Ok(normalize_lexical(&resolved));
-            }
-            Err(error) => {
-                let name = current.file_name().with_context(|| {
-                    format!(
-                        "could not resolve any existing ancestor of {}: {error}",
-                        path.display()
-                    )
-                })?;
-                tail.push(name.to_os_string());
-                current = current.parent().with_context(|| {
-                    format!(
-                        "could not resolve any existing ancestor of {}",
-                        path.display()
-                    )
-                })?;
-            }
-        }
-    }
-}
-
-fn cmp_components(p: &Path) -> Vec<String> {
-    p.components()
-        .map(|c| {
-            let s = c.as_os_str().to_string_lossy().into_owned();
-            if cfg!(windows) { s.to_lowercase() } else { s }
-        })
-        .collect()
-}
-
 /// True if `child` is equal to or nested under `ancestor` (lexical, case-
 /// insensitive on Windows).
 #[must_use]
 pub fn is_within(child: &Path, ancestor: &Path) -> bool {
-    let c = cmp_components(&normalize_lexical(child));
-    let a = cmp_components(&normalize_lexical(ancestor));
-    a.len() <= c.len() && c[..a.len()] == a[..]
+    app_paths::is_within(child, ancestor)
 }
 
 /// Validate that a backup destination is absolute and separate from the save tree.
+///
+/// Both paths are compared after following every link in the part that
+/// exists, so a junction or symlink cannot disguise an overlap, and a
+/// destination folder that does not exist yet is still allowed.
 ///
 /// # Errors
 ///
 /// Returns an error when a path cannot be resolved safely or the paths overlap.
 pub fn validate_backup_dest(save_dir: &Path, dest: &Path) -> Result<()> {
-    let save_dir = resolve_for_comparison(save_dir)
-        .with_context(|| format!("resolving save folder {}", save_dir.display()))?;
-    let dest = resolve_for_comparison(dest)
-        .with_context(|| format!("resolving backup destination {}", dest.display()))?;
-    if is_within(&dest, &save_dir) {
-        bail!("the backup destination is inside the Elden Ring save folder");
+    if !dest.is_absolute() {
+        bail!("the backup destination must be an absolute path");
     }
-    if is_within(&save_dir, &dest) {
-        bail!("the Elden Ring save folder is inside the backup destination");
+    let overlap = app_paths::overlap(dest, save_dir).with_context(|| {
+        format!(
+            "could not compare the backup destination {} with the save folder {}",
+            dest.display(),
+            save_dir.display()
+        )
+    })?;
+    match overlap {
+        Overlap::Apart => Ok(()),
+        Overlap::Same | Overlap::FirstInsideSecond => {
+            bail!("the backup destination is inside the Elden Ring save folder")
+        }
+        Overlap::SecondInsideFirst => {
+            bail!("the Elden Ring save folder is inside the backup destination")
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
