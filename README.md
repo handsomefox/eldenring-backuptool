@@ -73,21 +73,29 @@ The Dashboard shows the selected account, the save file and its size, the backup
 
 ## Restore a save
 
-Restoring is a manual step, so that nothing overwrites a live save behind your back.
+A save is restored only when you click **Restore…** and confirm, so nothing overwrites a live save behind your back.
 
-1. Close Elden Ring completely, and exit Steam as well.
-2. In the app, open the Backups tab, choose a snapshot, and click **Open** to reveal its folder in Explorer.
+1. Close Elden Ring completely.
+2. In the app, open the Backups tab, choose a snapshot, and click **Restore…**.
 
    ![The Backups tab, listing four snapshots newest first, each with an Open button](docs/backups.png)
 
-3. Double-click `save.zip`. Windows opens it like a folder. Copy the `.sl2` file, and the `.sl2.bak` file if there is one, into `%APPDATA%\EldenRing\<your-id>\`, replacing what is there.
-4. Start Steam again. If Steam Cloud reports a conflict, choose the local copy, which is the one you just restored, rather than the newer cloud version. The wording of that prompt changes between Steam versions, so pick whichever option keeps your local files.
+3. Check the time and the account in the confirmation, then click **Restore**. Save Guard backs up your current save as a new manual snapshot first. If that backup fails, nothing is restored. The status line reports the result.
+4. Start Elden Ring from Steam. If Steam Cloud reports a conflict, choose the local copy, which is the one you just restored, rather than the newer cloud version. The wording of that prompt changes between Steam versions, so pick whichever option keeps your local files.
+
+[SAFETY.md](SAFETY.md#restore) describes how a restore checks the snapshot and keeps the replaced save.
+
+A snapshot marked **damaged** failed its integrity check and cannot be restored. Pick an older one.
+
+To restore by hand instead, exit Steam, click **Open** on a snapshot, and double-click `save.zip`. Windows opens it like a folder. Copy the `.sl2` file, and the `.sl2.bak` file if there is one, into `%APPDATA%\EldenRing\<your-id>\`, replacing what is there.
 
 ## Where backups go
 
 The default destination is `Documents\Game Save Backups\Elden Ring\<SteamID64>\snapshots\`, and you can change it on the Settings tab.
 
-Each snapshot folder is named for its UTC timestamp and a short content hash. It holds `save.zip` with the compressed save files, plus a small `metadata.json` recording hashes of both the original saves and the finished archive. Elden Ring saves are mostly empty space and compress well: the 27.6 MiB example save in `example-save/` shrinks about 18 times. Save Guard re-checks an existing snapshot before it displays it, compares it for deduplication, or prunes it.
+Each snapshot folder is named for its UTC timestamp and a short content hash. It holds `save.zip` with the compressed save files, plus a small `metadata.json` recording hashes of both the original saves and the finished archive. Elden Ring saves are mostly empty space and compress well: the 27.6 MiB example save in `example-save/` shrinks about 18 times. Save Guard re-checks an existing snapshot before it displays it, compares it for deduplication, prunes it, or restores it.
+
+Save Guard keeps the newest snapshots up to the **Keep newest snapshots** setting on the Settings tab. On top of those, it always keeps the newest 10 snapshots taken before the game launched and the newest 10 taken after it exited, so a run of manual or periodic backups cannot push out the start and end of your recent sessions. A damaged snapshot takes none of those places, and is deleted once it is older than every snapshot Save Guard keeps.
 
 ## Uninstall
 
@@ -108,7 +116,7 @@ Each snapshot folder is named for its UTC timestamp and a short content hash. It
 
 ## Development
 
-The toolchain is pinned to Rust 1.98.1 in `rust-toolchain.toml`, and the package uses edition 2024. This repo cross-builds Windows binaries from Linux with [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin). On Windows, use the normal MSVC target.
+The toolchain is pinned to Rust 1.100.0 in `rust-toolchain.toml`, and the package uses edition 2024. This repo cross-builds Windows binaries from Linux with [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin). On Windows, use the normal MSVC target.
 
 CI runs these three commands on Ubuntu and the last two on Windows, along with `cargo audit` and `cargo machete`. Both workflows come from [handsomefox/app-workflows](https://github.com/handsomefox/app-workflows), which the other apps share:
 
@@ -134,7 +142,7 @@ cargo build --release                                        # on Windows
 
 The package has one library and one binary:
 
-- `src/lib.rs` is the portable core (`config`, `discovery`, `snapshot`, `retention`, `launch`, `paths`, `monitor`, `platform`) and holds the unit tests.
+- `src/lib.rs` is the portable core (`config`, `discovery`, `snapshot`, `retention`, `restore`, `launch`, `paths`, `monitor`, `platform`) and holds the unit tests.
 - `src/main.rs` dispatches between the GUI and `--monitor`.
 - `src/gui.rs` is the egui dashboard, behind the `gui` feature so the core tests stay GUI-free.
 

@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use crate::config::Config;
 use crate::discovery::{self, SaveCandidate};
 use crate::launch::{GameCommand, parse_monitor_args};
-use crate::platform::{self, SingleInstance};
+use crate::platform::{self, LockError, SingleInstance};
 use crate::snapshot::Reason;
 use crate::{GAME_PROCESS, retention};
 
@@ -41,17 +41,25 @@ where
 
     // Resolve config + save + destination. Failure here must NOT stop the game.
     let target = resolve_target()
-        .inspect_err(|e| tracing::warn!("backups disabled this session: {e:#}"))
+        .inspect_err(|e| tracing::error!("backups disabled this session: {e:#}"))
         .ok();
 
     // Single-instance: if another monitor is already running we still launch
-    // and track the game, but skip snapshotting to avoid duplicate work.
+    // and track the game, but skip snapshotting to avoid duplicate work. The
+    // guard lives until this function returns.
     let lock = SingleInstance::acquire(MUTEX_NAME);
-    if lock.is_none() {
-        tracing::info!("another monitor is active; launching without a second monitor");
+    match &lock {
+        Ok(_) => {}
+        Err(LockError::Held) => {
+            tracing::info!("another monitor is active; launching without a second monitor");
+        }
+        Err(error @ LockError::Failed(_)) => tracing::error!(
+            "could not check for another monitor ({error}); backing up anyway, \
+             because the backup folder's own lock keeps two backups apart"
+        ),
     }
-    // Present only while this monitor holds the lock and has somewhere to back up.
-    let target = target.filter(|_| lock.is_some());
+    // Present only while this monitor may back up and has somewhere to.
+    let target = target.filter(|_| backs_up(&lock));
 
     // Best-effort pre-launch snapshot.
     if let Some(t) = &target
@@ -81,6 +89,14 @@ where
     0
 }
 
+/// Whether this monitor takes snapshots, given how acquiring the
+/// single-instance lock went. Only another running monitor stops it: when the
+/// lock cannot be created, skipping backups would leave the session
+/// unprotected.
+fn backs_up(lock: &Result<SingleInstance, LockError>) -> bool {
+    !matches!(lock, Err(LockError::Held))
+}
+
 fn spawn_game(cmd: &GameCommand) -> std::io::Result<std::process::Child> {
     // Forward program + args verbatim; inherit cwd/env so EAC and Steam
     // tracking behave exactly as an unwrapped launch.
@@ -102,7 +118,9 @@ impl Target {
 
 fn resolve_target() -> anyhow::Result<Target> {
     use anyhow::{Context, bail};
-    let config = crate::config::load(&crate::paths::config_path()?).config;
+    // Never `config::load`: that moves a malformed file aside, and then the
+    // dashboard could not tell the user their settings were reset.
+    let config = crate::config::read(&crate::paths::config_path()?)?;
     let steamid = config
         .selected_steamid
         .clone()
@@ -171,24 +189,38 @@ fn watch_session(target: &Target, child: &mut std::process::Child) {
 
 /// Best-effort snapshot + retention. Logs outcome; never propagates errors.
 fn backup(target: &Target, reason: Reason) {
-    let Some(candidate) = target.candidate() else {
-        tracing::warn!(
-            "save {} vanished; skipping {} backup",
-            target.steamid,
-            reason.label()
-        );
-        return;
+    let result = if reason == Reason::PreLaunch {
+        // Never waits for a backup the window is making: the pre-launch
+        // backup runs before the game starts, and invariant 1 is never to
+        // hold it up.
+        match target.candidate() {
+            Some(candidate) => retention::try_create_and_prune(
+                &target.dest,
+                &target.steamid,
+                &candidate.source_files(),
+                reason,
+                target.config.retention,
+            ),
+            None => Err(anyhow::anyhow!("save {} vanished", target.steamid)),
+        }
+    } else {
+        // The game is already running or has exited, so waiting holds up
+        // nothing, and skipping would lose the session's progress. The files
+        // are collected once the wait is over.
+        retention::create_and_prune(
+            &target.dest,
+            &target.steamid,
+            || {
+                target
+                    .candidate()
+                    .map(|candidate| candidate.source_files())
+                    .ok_or_else(|| anyhow::anyhow!("save {} vanished", target.steamid))
+            },
+            reason,
+            target.config.retention,
+        )
     };
-    let sources = candidate.source_files();
-    // Never waits for a backup the window is making: the pre-launch backup
-    // runs before the game starts, and invariant 1 is never to hold it up.
-    match retention::try_create_and_prune(
-        &target.dest,
-        &target.steamid,
-        &sources,
-        reason,
-        target.config.retention,
-    ) {
+    match result {
         Ok(Some((snap, removed))) => {
             tracing::info!(
                 "{} snapshot created: {}",
@@ -214,4 +246,19 @@ fn wait_for(mut cond: impl FnMut() -> bool, timeout: Duration) -> bool {
         std::thread::sleep(PROCESS_POLL);
     }
     cond()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_another_monitor_stops_backups() {
+        assert!(!backs_up(&Err(LockError::Held)));
+        assert!(backs_up(&Err(LockError::Failed(std::io::Error::other(
+            "no mutex"
+        )))));
+        let held = SingleInstance::acquire("save-guard-monitor-test");
+        assert!(backs_up(&held));
+    }
 }

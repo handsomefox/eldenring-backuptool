@@ -6,7 +6,7 @@ The [README](README.md) covers what Save Guard does and how to build it. [SAFETY
 
 One library and one binary, split so the core stays testable without a GUI:
 
-- `src/lib.rs` is the portable core: `config`, `discovery`, `snapshot`, `retention`, `launch`, `paths`, `monitor`, and `platform`. The unit tests live here.
+- `src/lib.rs` is the portable core: `config`, `discovery`, `snapshot`, `retention`, `restore`, `launch`, `paths`, `monitor`, and `platform`. The unit tests live here.
 - `src/gui.rs` is the egui dashboard, behind the default `gui` feature.
 - `src/main.rs` dispatches between the GUI and `--monitor`.
 - The shared crates come from [handsomefox/app-internals](https://github.com/handsomefox/app-internals), pinned to a tag. `src/lib.rs` re-exports `app-update` as `update`, which updates the app from its GitHub releases. Only the dashboard creates an updater; `--monitor` never contacts GitHub. `app-folders` resolves `%APPDATA%` and `%LOCALAPPDATA%` and opens folders. `app-update-ui` draws the update dialog's content and `app-diagnostics` writes the daily log files; both are behind the `gui` feature. That repository's `AGENTS.md` covers changing them.
@@ -24,8 +24,9 @@ Save Guard forwards Steam's `%command%` verbatim. Never parse it, rewrite it, or
 [SAFETY.md](SAFETY.md) is a promise to users, not a description. Keep all of it:
 
 - A snapshot is verified before it is finalized: hash the source, write the archive to a temp folder on the same volume, re-read and decompress it, confirm the bytes, re-hash the source to catch a mid-copy change, then rename into place.
-- An existing archive is hashed before it is trusted for display, deduplication, or retention.
-- Retention deletes only finalized snapshot folders directly under `<destination>/snapshots/`, and only after the new snapshot is finalized.
+- An existing archive is hashed before it is trusted for display, deduplication, retention, or a restore. A damaged snapshot is shown as damaged, never as good.
+- Retention deletes only finalized snapshot folders directly under `<destination>/snapshots/`, and only after the new snapshot is finalized. A damaged snapshot takes no kept place, and is deleted only once it is older than every snapshot retention keeps.
+- A restore backs up the current save first and stops if that fails. It moves the replaced files back if any rename fails, and deletes them only once they match that backup.
 - The destination and the live save folder may not contain each other, checked in both directions after resolving symlinks and junctions.
 - A finalized snapshot is never overwritten.
 
@@ -35,7 +36,7 @@ Deduplication compares content hashes, never modification times.
 
 Unit tests live in `src/lib.rs` beside the code they cover. Use `tempfile` for filesystem scenarios, and cover the rejection path: a truncated source, a mid-copy change, a path guard violation, and a corrupted existing archive.
 
-CI cannot reach the Steam launch option, the background monitor across a real game session, or a manual restore. Exercise those three by hand on Windows. The same goes for an app update: run a debug build with `APP_UPDATE_PRETEND_VERSION` set to an older version.
+CI cannot reach the Steam launch option, the background monitor across a real game session, or a restore over a real save. Exercise those three by hand on Windows. The same goes for an app update: run a debug build with `APP_UPDATE_PRETEND_VERSION` set to an older version.
 
 ## CI and releases
 

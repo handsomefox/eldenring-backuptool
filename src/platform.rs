@@ -57,41 +57,69 @@ pub struct SingleInstance {
     handle: windows_sys::Win32::Foundation::HANDLE,
 }
 
+/// Why [`SingleInstance::acquire`] returned no lock.
+#[derive(Debug)]
+pub enum LockError {
+    /// Another process holds the lock.
+    Held,
+    /// The lock could not be created, so whether another process holds it is
+    /// unknown.
+    Failed(std::io::Error),
+}
+
+impl std::fmt::Display for LockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LockError::Held => f.write_str("another process holds the lock"),
+            LockError::Failed(error) => write!(f, "the lock could not be created: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for LockError {}
+
 impl SingleInstance {
-    /// Acquire the named lock. Returns `None` if another process already holds
-    /// it (i.e. a monitor is already running).
+    /// Acquire the named lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LockError::Held`] if another process already holds it (a
+    /// monitor is already running), or [`LockError::Failed`] if Windows could
+    /// not create it.
     #[cfg(windows)]
-    #[must_use]
-    #[expect(
-        clippy::multiple_unsafe_ops_per_block,
-        reason = "mutex creation, last-error inspection, and duplicate-handle cleanup are one transaction"
-    )]
-    pub fn acquire(name: &str) -> Option<Self> {
-        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
+    pub fn acquire(name: &str) -> Result<Self, LockError> {
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS};
         use windows_sys::Win32::System::Threading::CreateMutexW;
 
         let wide: Vec<u16> = format!("Local\\{name}")
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
-        // SAFETY: creating a named mutex with a valid null-terminated name.
-        unsafe {
-            let handle = CreateMutexW(std::ptr::null(), 1, wide.as_ptr());
-            if handle.is_null() {
-                return None;
-            }
-            if GetLastError() == ERROR_ALREADY_EXISTS {
-                CloseHandle(handle);
-                return None;
-            }
-            Some(Self { handle })
+        // SAFETY: creating a named mutex with a valid null-terminated name and
+        // no security attributes.
+        let handle = unsafe { CreateMutexW(std::ptr::null(), 1, wide.as_ptr()) };
+        // Read the last error at once, before anything else can change it.
+        let error = std::io::Error::last_os_error();
+        if handle.is_null() {
+            return Err(LockError::Failed(error));
         }
+        if error.raw_os_error() == i32::try_from(ERROR_ALREADY_EXISTS).ok() {
+            // SAFETY: `handle` is a valid handle this function owns and no
+            // longer uses.
+            unsafe { CloseHandle(handle) };
+            return Err(LockError::Held);
+        }
+        Ok(Self { handle })
     }
 
+    /// Acquire the named lock. Off Windows there is no lock to take.
+    ///
+    /// # Errors
+    ///
+    /// Never fails off Windows.
     #[cfg(not(windows))]
-    #[must_use]
-    pub fn acquire(_name: &str) -> Option<Self> {
-        Some(Self {})
+    pub fn acquire(_name: &str) -> Result<Self, LockError> {
+        Ok(Self {})
     }
 }
 

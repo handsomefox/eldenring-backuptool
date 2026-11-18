@@ -284,6 +284,15 @@ fn hash_file(path: &Path, name: &str, limit: u64) -> Result<FileHash> {
 }
 
 fn load_snapshot_metadata(dir: &Path, expected_steamid: Option<&str>) -> Result<Snapshot> {
+    let snapshot = read_snapshot_metadata(dir, expected_steamid)?;
+    check_archive_file(&snapshot)?;
+    Ok(snapshot)
+}
+
+/// Read and validate `metadata.json` alone. A snapshot that passes belongs to
+/// the expected account, so a fault found later in its archive marks it as
+/// damaged rather than as someone else's folder.
+fn read_snapshot_metadata(dir: &Path, expected_steamid: Option<&str>) -> Result<Snapshot> {
     let bytes = read_limited(&dir.join(METADATA_FILE), MAX_METADATA_BYTES)?;
     let metadata: Metadata = serde_json::from_slice(&bytes)?;
     if metadata.format_version != METADATA_VERSION {
@@ -298,19 +307,24 @@ fn load_snapshot_metadata(dir: &Path, expected_steamid: Option<&str>) -> Result<
         bail!("unexpected snapshot archive name");
     }
     validate_file_hashes(&metadata.files)?;
-
-    let archive_path = dir.join(ARCHIVE_FILE);
-    let archive_meta = std::fs::metadata(&archive_path)?;
-    if !archive_meta.is_file() || archive_meta.len() != metadata.stored_bytes {
-        bail!("snapshot archive is missing or has the wrong size");
-    }
-    if metadata.stored_bytes > MAX_ARCHIVE_BYTES {
-        bail!("snapshot archive exceeds the safety limit");
-    }
     Ok(Snapshot {
         dir: dir.to_path_buf(),
         metadata,
     })
+}
+
+/// The archive must exist with the size the metadata records.
+fn check_archive_file(snapshot: &Snapshot) -> Result<()> {
+    let archive_meta = std::fs::metadata(snapshot.dir.join(ARCHIVE_FILE))
+        .ok()
+        .filter(std::fs::Metadata::is_file);
+    if archive_meta.is_none_or(|meta| meta.len() != snapshot.metadata.stored_bytes) {
+        bail!("snapshot archive is missing or has the wrong size");
+    }
+    if snapshot.metadata.stored_bytes > MAX_ARCHIVE_BYTES {
+        bail!("snapshot archive exceeds the safety limit");
+    }
+    Ok(())
 }
 
 /// What a `save.zip` looked like when it last hashed to its metadata.
@@ -347,7 +361,7 @@ enum Verify {
 }
 
 /// Trust a snapshot's archive once its hash matches the metadata.
-fn verify_snapshot_archive(snapshot: Snapshot, verify: Verify) -> Result<Snapshot> {
+fn verify_snapshot_archive(snapshot: &Snapshot, verify: Verify) -> Result<()> {
     let archive_path = snapshot.dir.join(ARCHIVE_FILE);
     // Read before hashing, so a write during the hash changes what is cached.
     let stamp = std::fs::metadata(&archive_path)
@@ -362,16 +376,16 @@ fn verify_snapshot_archive(snapshot: Snapshot, verify: Verify) -> Result<Snapsho
         && let Some(stamp) = &stamp
         && verified_archives().get(&archive_path) == Some(stamp)
     {
-        return Ok(snapshot);
+        return Ok(());
     }
-    if let Err(e) = hash_snapshot_archive(&snapshot) {
+    if let Err(e) = hash_snapshot_archive(snapshot) {
         verified_archives().remove(&archive_path);
         return Err(e);
     }
     if let Some(stamp) = stamp {
         verified_archives().insert(archive_path, stamp);
     }
-    Ok(snapshot)
+    Ok(())
 }
 
 /// Hash the complete archive and compare it with the metadata, always.
@@ -407,15 +421,26 @@ fn is_real_directory(entry: &std::fs::DirEntry) -> bool {
     true
 }
 
-/// Structurally list snapshots for one Steam account, sorted oldest → newest.
-///
-/// Metadata is bounded and validated, and the recorded archive name, existence,
-/// and size must match. Archive payloads are deliberately not read here;
-/// callers that restore data must use [`extract`], dedup uses [`newest`],
-/// retention uses [`list_rehashed`], and display uses [`list_verified`]. Temp directories and reparse
-/// points are ignored.
-#[must_use]
-pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
+/// A snapshot whose metadata names the account, with the result of checking
+/// its archive.
+#[derive(Debug, Clone)]
+pub struct Checked {
+    pub snapshot: Snapshot,
+    /// Why the archive failed its check, or `None` when it passed.
+    pub damage: Option<String>,
+}
+
+impl Checked {
+    #[must_use]
+    pub fn is_damaged(&self) -> bool {
+        self.damage.is_some()
+    }
+}
+
+/// Every finalized snapshot folder for one Steam account whose metadata is
+/// valid, sorted oldest → newest, without looking at the archives. Temp
+/// directories and reparse points are ignored.
+fn list_metadata(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     let mut out = Vec::new();
     let dir = snapshots_dir(dest);
     // A snapshots folder that is a link or junction lists nothing, so
@@ -435,7 +460,7 @@ pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
         if name.starts_with(TMP_PREFIX) {
             continue;
         }
-        if let Ok(snapshot) = load_snapshot_metadata(&dir, Some(steamid)) {
+        if let Ok(snapshot) = read_snapshot_metadata(&dir, Some(steamid)) {
             out.push(snapshot);
         }
     }
@@ -443,35 +468,75 @@ pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
     out
 }
 
-/// List the snapshots for one Steam account whose complete archive hashes to
-/// the value in their metadata, sorted oldest → newest. A snapshot that fails
-/// is logged and left out.
+/// Structurally list snapshots for one Steam account, sorted oldest → newest.
+///
+/// Metadata is bounded and validated, and the recorded archive name, existence,
+/// and size must match. Archive payloads are deliberately not read here;
+/// callers that restore data must use [`extract`], dedup uses [`newest`],
+/// retention uses [`list_all_rehashed`], and display uses [`list_all`]. Temp
+/// directories and reparse points are ignored.
+#[must_use]
+pub fn list(dest: &Path, steamid: &str) -> Vec<Snapshot> {
+    list_metadata(dest, steamid)
+        .into_iter()
+        .filter(|snapshot| check_archive_file(snapshot).is_ok())
+        .collect()
+}
+
+/// List every snapshot for one Steam account, sorted oldest → newest, each
+/// marked with whether its complete archive hashes to the value in its
+/// metadata. A damaged snapshot is logged and listed, so the dashboard can
+/// show it rather than hide it.
 ///
 /// This is for display. It trusts an archive already verified in this process
 /// while its size and modification time are unchanged, and hashes the rest, so
 /// callers must run it off the UI thread.
 #[must_use]
-pub fn list_verified(dest: &Path, steamid: &str) -> Vec<Snapshot> {
+pub fn list_all(dest: &Path, steamid: &str) -> Vec<Checked> {
     list_checked(dest, steamid, Verify::Cached)
 }
 
-/// Like [`list_verified`], but hashes every archive, whatever was verified
-/// before. Retention uses it, so a damaged archive never takes a `keep` slot.
+/// Like [`list_all`], but hashes every archive, whatever was verified before.
+/// Retention uses it, so a damaged archive never takes a `keep` slot.
 #[must_use]
-pub fn list_rehashed(dest: &Path, steamid: &str) -> Vec<Snapshot> {
+pub fn list_all_rehashed(dest: &Path, steamid: &str) -> Vec<Checked> {
     list_checked(dest, steamid, Verify::Rehash)
 }
 
-fn list_checked(dest: &Path, steamid: &str, verify: Verify) -> Vec<Snapshot> {
-    list(dest, steamid)
+/// The snapshots from [`list_all`] that passed their check.
+#[must_use]
+pub fn list_verified(dest: &Path, steamid: &str) -> Vec<Snapshot> {
+    only_good(list_all(dest, steamid))
+}
+
+/// The snapshots from [`list_all_rehashed`] that passed their check.
+#[must_use]
+pub fn list_rehashed(dest: &Path, steamid: &str) -> Vec<Snapshot> {
+    only_good(list_all_rehashed(dest, steamid))
+}
+
+fn only_good(checked: Vec<Checked>) -> Vec<Snapshot> {
+    checked
         .into_iter()
-        .filter_map(|snapshot| {
-            let dir = snapshot.dir.clone();
-            verify_snapshot_archive(snapshot, verify)
-                .inspect_err(|e| {
-                    tracing::warn!("snapshot {} failed verification: {e:#}", dir.display());
-                })
-                .ok()
+        .filter(|checked| !checked.is_damaged())
+        .map(|checked| checked.snapshot)
+        .collect()
+}
+
+fn list_checked(dest: &Path, steamid: &str, verify: Verify) -> Vec<Checked> {
+    list_metadata(dest, steamid)
+        .into_iter()
+        .map(|snapshot| {
+            let result = check_archive_file(&snapshot)
+                .and_then(|()| verify_snapshot_archive(&snapshot, verify));
+            let damage = result.err().map(|e| {
+                tracing::warn!(
+                    "snapshot {} failed verification: {e:#}",
+                    snapshot.dir.display()
+                );
+                format!("{e:#}")
+            });
+            Checked { snapshot, damage }
         })
         .collect()
 }
@@ -485,7 +550,7 @@ fn list_checked(dest: &Path, steamid: &str, verify: Verify) -> Vec<Snapshot> {
 pub fn newest(dest: &Path, steamid: &str) -> Option<Snapshot> {
     let mut snapshots = list(dest, steamid);
     while let Some(snapshot) = snapshots.pop() {
-        if let Ok(snapshot) = verify_snapshot_archive(snapshot, Verify::Rehash) {
+        if verify_snapshot_archive(&snapshot, Verify::Rehash).is_ok() {
             return Some(snapshot);
         }
     }
@@ -610,11 +675,17 @@ pub fn create_with_hook(
     bail!("save kept changing; no stable copy after {MAX_COPY_ATTEMPTS} attempts")
 }
 
-/// Write `metadata.json` into the verified temp folder, then rename the folder
-/// into place under a name no finalized snapshot uses.
+/// Write `metadata.json` into the verified temp folder and flush it to disk,
+/// then rename the folder into place under a name no finalized snapshot uses.
 fn finalize(tmp: &Path, snaps_dir: &Path, metadata: &Metadata) -> Result<PathBuf> {
     let json = serde_json::to_vec_pretty(metadata)?;
-    std::fs::write(tmp.join(METADATA_FILE), &json)?;
+    let metadata_path = tmp.join(METADATA_FILE);
+    let mut file = File::create(&metadata_path)
+        .with_context(|| format!("creating {}", metadata_path.display()))?;
+    file.write_all(&json)?;
+    file.sync_all()
+        .with_context(|| format!("flushing {}", metadata_path.display()))?;
+    drop(file);
 
     let final_dir = unique_final_dir(snaps_dir, metadata.created_utc, &metadata.files);
     std::fs::rename(tmp, &final_dir)
@@ -682,7 +753,11 @@ fn write_archive(zip_path: &Path, source_files: &[PathBuf]) -> Result<Vec<FileHa
             MAX_SOURCE_FILE_BYTES,
         )?);
     }
-    zip.finish()?;
+    // On disk before the folder is renamed into place, so a power cut cannot
+    // leave a finalized snapshot whose archive was never written.
+    zip.finish()?
+        .sync_all()
+        .with_context(|| format!("flushing {}", zip_path.display()))?;
     validate_file_hashes(&hashes)?;
     Ok(hashes)
 }
@@ -779,6 +854,89 @@ pub fn extract(snapshot_dir: &Path, out_dir: &Path) -> Result<()> {
             drop(output);
             let _ = std::fs::remove_file(&output_path);
             bail!("archive verification failed for {name}");
+        }
+    }
+    Ok(())
+}
+
+/// Remove the temp folders a backup left directly under `<dest>/snapshots/`
+/// when it was cut off, such as by a power cut. Only real folders whose names
+/// start with the temp prefix are removed; links and junctions are left
+/// alone, and nothing outside that folder is touched. Returns how many were
+/// removed.
+///
+/// The caller must hold the destination's backup lock, so no backup is
+/// writing into one of them.
+pub(crate) fn remove_temp_dirs(dest: &Path) -> usize {
+    let dir = snapshots_dir(dest);
+    if !is_real_dir_path(&dir) {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let is_temp = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(TMP_PREFIX));
+        if !is_temp || !is_real_directory(&entry) {
+            continue;
+        }
+        let path = entry.path();
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => {
+                tracing::info!("removed leftover temp folder {}", path.display());
+                removed += 1;
+            }
+            Err(e) => tracing::warn!("could not remove temp folder {}: {e}", path.display()),
+        }
+    }
+    removed
+}
+
+/// Load the snapshot in `snapshot_dir` for a restore, and hash its whole
+/// archive. The folder must be a real, finalized snapshot folder directly
+/// under `<dest>/snapshots/`, and belong to `steamid`.
+///
+/// # Errors
+///
+/// Returns an error if the folder is not such a snapshot or fails its check.
+pub fn open_for_restore(dest: &Path, snapshot_dir: &Path, steamid: &str) -> Result<Snapshot> {
+    let snaps_dir = snapshots_dir(dest);
+    let name = snapshot_dir.file_name().and_then(|n| n.to_str());
+    if snapshot_dir.parent() != Some(snaps_dir.as_path())
+        || name.is_none_or(|name| name.starts_with(TMP_PREFIX))
+        || !is_real_dir_path(&snaps_dir)
+        || !is_real_dir_path(snapshot_dir)
+    {
+        bail!(
+            "{} is not a backup in {}",
+            snapshot_dir.display(),
+            snaps_dir.display()
+        );
+    }
+    let snapshot = load_snapshot_metadata(snapshot_dir, Some(steamid))?;
+    hash_snapshot_archive(&snapshot)?;
+    Ok(snapshot)
+}
+
+/// Hash each of `expected` in `dir` and compare it with its recorded size and
+/// SHA-256.
+///
+/// # Errors
+///
+/// Returns an error if a file is missing, unreadable, or differs.
+pub fn check_files(dir: &Path, expected: &[FileHash]) -> Result<()> {
+    validate_file_hashes(expected)?;
+    for file in expected {
+        let actual = hash_file(&dir.join(&file.name), &file.name, MAX_SOURCE_FILE_BYTES)?;
+        if &actual != file {
+            bail!(
+                "{} does not match the backup",
+                dir.join(&file.name).display()
+            );
         }
     }
     Ok(())
@@ -1023,6 +1181,80 @@ mod tests {
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].dir, older.dir);
         assert_eq!(list(&e.dest, "111").len(), 2);
+    }
+
+    #[test]
+    fn list_all_marks_damaged_snapshots_instead_of_hiding_them() {
+        let e = env();
+        let src = sources(&e, false);
+        let good = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        write(&src[0], b"second");
+        let tampered = create(&e.dest, "111", &src, Reason::Periodic)
+            .unwrap()
+            .unwrap();
+        write(&src[0], b"third");
+        let missing = create(&e.dest, "111", &src, Reason::PostExit)
+            .unwrap()
+            .unwrap();
+        tamper_archive_same_size(&tampered);
+        std::fs::remove_file(missing.dir.join(ARCHIVE_FILE)).unwrap();
+        // Another account's snapshot is not listed at all.
+        create(&e.dest, "222", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+
+        for listed in [list_all(&e.dest, "111"), list_all_rehashed(&e.dest, "111")] {
+            let dirs: Vec<_> = listed.iter().map(|c| c.snapshot.dir.clone()).collect();
+            assert_eq!(
+                dirs,
+                [good.dir.clone(), tampered.dir.clone(), missing.dir.clone()]
+            );
+            assert!(!listed[0].is_damaged());
+            assert!(listed[1].damage.as_deref().unwrap().contains("hash"));
+            assert!(listed[2].damage.as_deref().unwrap().contains("missing"));
+        }
+        assert_eq!(list_verified(&e.dest, "111").len(), 1);
+        // The structural listing still leaves out a missing archive.
+        assert_eq!(list(&e.dest, "111").len(), 2);
+    }
+
+    #[test]
+    fn open_for_restore_takes_only_a_good_snapshot_of_the_account_in_the_destination() {
+        let e = env();
+        let src = sources(&e, true);
+        let snap = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            open_for_restore(&e.dest, &snap.dir, "111").unwrap().dir,
+            snap.dir
+        );
+        assert!(open_for_restore(&e.dest, &snap.dir, "222").is_err());
+        // A copy outside `snapshots/` is not a backup in the destination.
+        let elsewhere = e.dest.join("copy");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        for name in [ARCHIVE_FILE, METADATA_FILE] {
+            std::fs::copy(snap.dir.join(name), elsewhere.join(name)).unwrap();
+        }
+        assert!(open_for_restore(&e.dest, &elsewhere, "111").is_err());
+        tamper_archive_same_size(&snap);
+        assert!(open_for_restore(&e.dest, &snap.dir, "111").is_err());
+    }
+
+    #[test]
+    fn check_files_compares_bytes_with_the_record() {
+        let e = env();
+        let src = sources(&e, true);
+        let snap = create(&e.dest, "111", &src, Reason::Manual)
+            .unwrap()
+            .unwrap();
+        check_files(&e.save_dir, &snap.metadata.files).unwrap();
+        write(&src[1], b"bak-v2");
+        assert!(check_files(&e.save_dir, &snap.metadata.files).is_err());
+        std::fs::remove_file(&src[1]).unwrap();
+        assert!(check_files(&e.save_dir, &snap.metadata.files).is_err());
     }
 
     fn set_archive_mtime(snapshot: &Snapshot, modified: SystemTime) {

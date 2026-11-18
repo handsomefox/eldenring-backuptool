@@ -9,6 +9,7 @@ pub mod launch;
 pub mod monitor;
 pub mod paths;
 pub mod platform;
+pub mod restore;
 pub mod retention;
 pub mod snapshot;
 pub use app_update as update;

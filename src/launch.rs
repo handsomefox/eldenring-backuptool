@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn program_only_no_args() {
         let cmd = parse_monitor_args(os(&["--monitor", "game.exe"])).unwrap();
-        assert!(cmd.args.is_empty());
+        assert_eq!(cmd.args, Vec::<OsString>::new());
     }
 
     #[test]

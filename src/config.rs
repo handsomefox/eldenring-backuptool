@@ -94,17 +94,34 @@ pub fn load(path: &Path) -> LoadResult {
     }
 }
 
-/// The configured log level. Unlike [`load`], this never moves a malformed
-/// file aside, so the dashboard's own [`load`] still finds it and can tell the
-/// user their settings were reset.
+/// Load config from `path` without changing anything on disk. Missing file →
+/// defaults. Unlike [`load`], a malformed file is an error and stays where it
+/// is, so the dashboard's own [`load`] still finds it and can tell the user
+/// their settings were reset. The background monitor uses this.
+///
+/// # Errors
+///
+/// Returns an error if the file exists but cannot be read or parsed.
+pub fn read(path: &Path) -> Result<Config> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Config::default());
+        }
+        Err(error) => {
+            return Err(anyhow::Error::new(error).context(format!("reading {}", path.display())));
+        }
+    };
+    let config = serde_json::from_slice::<Config>(&bytes)
+        .with_context(|| format!("the settings file {} is unreadable", path.display()))?;
+    Ok(config.sanitized())
+}
+
+/// The configured log level, or the default one when the file is missing or
+/// malformed. Like [`read`], this never moves a malformed file aside.
 #[must_use]
 pub fn log_level(path: &Path) -> String {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Config>(&bytes).ok())
-        .unwrap_or_default()
-        .sanitized()
-        .log_level
+    read(path).unwrap_or_default().sanitized().log_level
 }
 
 fn preserve_broken(path: &Path) -> Option<PathBuf> {
@@ -116,7 +133,8 @@ fn preserve_broken(path: &Path) -> Option<PathBuf> {
 }
 
 /// Atomically write config: serialize, write to a temp file in the same
-/// directory, then rename over the target.
+/// directory, flush it to disk, then rename over the target. Without the
+/// flush, a power cut after the rename could leave an empty `config.json`.
 ///
 /// # Errors
 ///
@@ -131,7 +149,7 @@ pub fn save(path: &Path, config: &Config) -> Result<()> {
     let json = serde_json::to_vec_pretty(&config)?;
 
     let tmp = dir.join(format!(".config.tmp-{}", std::process::id()));
-    let result = std::fs::write(&tmp, &json)
+    let result = write_synced(&tmp, &json)
         .with_context(|| format!("writing {}", tmp.display()))
         .and_then(|()| {
             std::fs::rename(&tmp, path).with_context(|| format!("finalizing {}", path.display()))
@@ -140,6 +158,14 @@ pub fn save(path: &Path, config: &Config) -> Result<()> {
         let _ = std::fs::remove_file(&tmp);
     }
     result
+}
+
+/// Write `bytes` to a new file at `path` and flush them to disk.
+fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 #[cfg(test)]
@@ -211,6 +237,29 @@ mod tests {
         std::fs::write(&path, b"{ not valid json").unwrap();
         assert_eq!(log_level(&path), "info");
         assert!(path.exists());
+        assert!(load(&path).recovered_from.is_some());
+    }
+
+    #[test]
+    fn read_reports_a_malformed_file_and_leaves_it_in_place() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.json");
+        assert_eq!(read(&path).unwrap(), Config::default());
+
+        std::fs::write(&path, br#"{"selected_steamid":"123","interval_secs":1}"#).unwrap();
+        let config = read(&path).unwrap();
+        assert_eq!(config.selected_steamid.as_deref(), Some("123"));
+        assert_eq!(config.interval_secs, MIN_INTERVAL_SECS);
+
+        std::fs::write(&path, b"{ not valid json").unwrap();
+        let error = read(&path).unwrap_err();
+        assert!(format!("{error:#}").contains("unreadable"), "{error:#}");
+        // Nothing moved: the dashboard's load still finds it and says so.
+        let names: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["config.json"]);
         assert!(load(&path).recovered_from.is_some());
     }
 
